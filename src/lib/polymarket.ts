@@ -45,7 +45,7 @@ export function isAllowedCategory(cat: string): cat is MarketCategory {
 
 type Listener<T> = (data: T) => void;
 
-class Emitter<EventMap extends Record<string, unknown>> {
+class Emitter<EventMap extends { [key: string]: unknown }> {
   private listeners = new Map<keyof EventMap, Set<Listener<any>>>();
 
   on<K extends keyof EventMap>(event: K, fn: Listener<EventMap[K]>) {
