@@ -24,3 +24,8 @@ Strategies: Maker Bot, AI News Lag, Logical Arbitrage
 - 2 categories max AI/Tech and Politics
 - 67% confidence minimum
 - Kill switch at -20% in 24hrs
+
+## Sprint Status
+- Sprint 1: COMPLETE ✅
+- Sprint 2: IN PROGRESS 🔧
+- Site live at: polybot-app.pages.dev
