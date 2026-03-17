@@ -67,7 +67,7 @@ class Emitter<EventMap extends { [key: string]: unknown }> {
 // PolymarketWS — WebSocket client
 // ---------------------------------------------------------------------------
 
-interface PolymarketEvents {
+type PolymarketEvents = {
   price: WSPriceUpdate;
   trade: WSTrade;
   whale: WSWhaleTrade;
@@ -76,7 +76,7 @@ interface PolymarketEvents {
   disconnected: { code: number; reason: string };
   error: { message: string };
   stateChange: WSConnectionState;
-}
+};
 
 export class PolymarketWS extends Emitter<PolymarketEvents> {
   private ws: WebSocket | null = null;
