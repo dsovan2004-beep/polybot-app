@@ -3,6 +3,8 @@
 // POST /api/markets — Record a new trade (from strategy engine)
 // ============================================================================
 
+export const runtime = "edge";
+
 import { NextRequest, NextResponse } from "next/server";
 import type { ApiResponse, Trade, Performance, DashboardData } from "@/lib/types";
 import {
