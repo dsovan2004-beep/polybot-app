@@ -4,8 +4,6 @@ import { useEffect, useState, useCallback } from "react";
 import type {
   MarketRow,
   SignalRow,
-  TradeRow,
-  PerformanceRow,
 } from "@/lib/supabase";
 
 // ============================================================================
@@ -521,7 +519,6 @@ export default function BotDashboard() {
   }, [loadMarkets, loadBtc]);
 
   // Performance will be wired to Supabase in a future sprint
-  const perf: PerformanceRow | null = null;
 
   return (
     <div style={{ minHeight: "100vh", background: css.bg, color: css.textPrimary }}>
@@ -599,12 +596,12 @@ export default function BotDashboard() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
           <StatCard
             label="Total P&L"
-            value={fmt$(perf?.pnl_cumulative ?? 0)}
-            color={pnlColor(perf?.pnl_cumulative ?? 0)}
+            value={fmt$(0)}
+            color={pnlColor(0)}
           />
           <StatCard
             label="Win Rate"
-            value={fmtPct(perf?.win_rate ?? 0)}
+            value={fmtPct(0)}
           />
           <StatCard
             label="Signals Today"
@@ -612,7 +609,7 @@ export default function BotDashboard() {
           />
           <StatCard
             label="USDC Rebates"
-            value={fmt$(perf?.rebates_earned ?? 0)}
+            value={fmt$(0)}
           />
         </div>
 
