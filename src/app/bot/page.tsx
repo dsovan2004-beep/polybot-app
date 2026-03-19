@@ -520,7 +520,8 @@ export default function BotDashboard() {
     };
   }, [loadMarkets, loadBtc]);
 
-  const perf: PerformanceRow | null = null; // Performance comes from a separate table — will be wired later
+  // Performance will be wired to Supabase in a future sprint
+  const perf: PerformanceRow | null = null;
 
   return (
     <div style={{ minHeight: "100vh", background: css.bg, color: css.textPrimary }}>
