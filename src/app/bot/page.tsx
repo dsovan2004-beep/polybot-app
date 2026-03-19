@@ -53,10 +53,10 @@ interface WhaleRow {
   id: string;
   market_id: string;
   wallet_address: string;
-  side: string;
-  size: number;
-  price: number;
-  detected_at: string;
+  direction: string;
+  trade_size_usd: number;
+  price_at_trade: number;
+  created_at: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -405,9 +405,9 @@ function SignalCard({ signal }: { signal: SignalRow }) {
 // Whale Row
 // ---------------------------------------------------------------------------
 
-function WhaleRow({ whale }: { whale: WhaleRow }) {
-  const dirColor = whale.side === "yes" || whale.side === "YES" ? "#4ade80" : "#f87171";
-  const dirBg = whale.side === "yes" || whale.side === "YES"
+function WhaleRowItem({ whale }: { whale: WhaleRow }) {
+  const dirColor = whale.direction === "yes" || whale.direction === "YES" ? "#4ade80" : "#f87171";
+  const dirBg = whale.direction === "yes" || whale.direction === "YES"
     ? "rgba(74,222,128,0.1)"
     : "rgba(248,113,113,0.1)";
 
@@ -435,13 +435,13 @@ function WhaleRow({ whale }: { whale: WhaleRow }) {
           marginRight: 12,
         }}
       >
-        {whale.side.toUpperCase()}
+        {whale.direction.toUpperCase()}
       </span>
       <span style={{ fontSize: 13, fontWeight: 600, color: css.textPrimary, fontFamily: "monospace", width: 80, textAlign: "right" }}>
-        {fmtK(whale.size)}
+        {fmtK(whale.trade_size_usd)}
       </span>
       <span style={{ fontSize: 11, color: css.textSecondary, width: 70, textAlign: "right" }}>
-        {timeAgo(whale.detected_at)}
+        {timeAgo(whale.created_at)}
       </span>
     </div>
   );
@@ -630,11 +630,27 @@ export default function BotDashboard() {
               {connected && <span style={{ color: "#4ade80", marginLeft: 8, fontSize: 10 }}>WS CONNECTED</span>}
             </p>
             <div style={{ maxHeight: 400, overflowY: "auto" }}>
-              {signals.length === 0 ? (
+              {signals.length === 0 && markets.length === 0 ? (
                 <Card>
                   <p style={{ color: css.textSecondary, textAlign: "center", padding: 24, fontSize: 13 }}>
-                    {markets.length > 0 ? "Analyzing markets..." : "No signals yet"}
+                    No signals yet — start the feed script
                   </p>
+                </Card>
+              ) : signals.length === 0 ? (
+                <Card>
+                  <div style={{ padding: 8 }}>
+                    <p style={{ color: css.textSecondary, fontSize: 11, marginBottom: 8 }}>
+                      {markets.length} markets found — analyzing...
+                    </p>
+                    {markets.slice(0, 5).map((m) => (
+                      <div key={m.id} style={{ padding: "6px 0", borderBottom: `0.5px solid ${css.border}`, fontSize: 12 }}>
+                        <span style={{ color: css.textPrimary }}>{m.title?.slice(0, 50)}</span>
+                        <span style={{ color: css.indigo, marginLeft: 8, fontFamily: "monospace" }}>
+                          {fmtPct(m.current_price)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </Card>
               ) : (
                 signals.map((s) => (
@@ -676,7 +692,7 @@ export default function BotDashboard() {
                   <span style={{ width: 70, textAlign: "right" }}>Time</span>
                 </div>
                 {whales.map((w) => (
-                  <WhaleRow key={w.id} whale={w} />
+                  <WhaleRowItem key={w.id} whale={w} />
                 ))}
               </div>
             )}

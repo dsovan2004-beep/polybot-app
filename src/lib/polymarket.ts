@@ -42,10 +42,10 @@ export interface WhaleActivityRow {
   id: string;
   market_id: string;
   wallet_address: string;
-  side: string;
-  size: number;
-  price: number;
-  detected_at: string;
+  direction: string;
+  trade_size_usd: number;
+  price_at_trade: number;
+  created_at: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,15 +110,13 @@ async function saveWhaleActivity(
   marketId: string
 ): Promise<void> {
   try {
-    // whale_activity table may not exist yet — fail silently
+    // whale_activity table columns: market_id, wallet_address, direction, trade_size_usd, price_at_trade
     await getSupabase().from("whale_activity").insert({
       market_id: marketId,
       wallet_address: "polymarket-ws",
-      side: trade.outcome.toLowerCase() === "yes" ? "yes" : "no",
-      size: trade.usdAmount,
-      price: trade.price,
-      total_position: 0,
-      detected_at: trade.timestamp,
+      direction: trade.outcome.toLowerCase() === "yes" ? "yes" : "no",
+      trade_size_usd: trade.usdAmount,
+      price_at_trade: trade.price,
     });
   } catch {
     // Table doesn't exist yet — skip silently
@@ -294,7 +292,7 @@ export async function getWhaleActivity(
     const { data, error } = await getSupabase()
       .from("whale_activity")
       .select("*")
-      .order("detected_at", { ascending: false })
+      .order("created_at", { ascending: false })
       .limit(limit);
     if (error) return []; // Table may not exist yet
     return data as WhaleActivityRow[];

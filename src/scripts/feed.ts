@@ -29,7 +29,7 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const POLYMARKET_WS = "wss://ws-live-data.polymarket.com";
-const MIN_USD = 500;
+const MIN_USD = 10;
 const PRICE_MIN = 0.02;
 const PRICE_MAX = 0.98;
 
@@ -123,10 +123,9 @@ async function saveWhale(
   const { error } = await supabase.from("whale_activity").insert({
     market_id: marketId,
     wallet_address: "polymarket-ws",
-    side: side.toLowerCase(),
-    size,
-    price,
-    detected_at: new Date().toISOString(),
+    direction: side.toLowerCase(),
+    trade_size_usd: size,
+    price_at_trade: price,
   });
 
   if (error) {
@@ -151,22 +150,34 @@ function parseTrade(raw: string): ParsedTrade | null {
   try {
     const msg = JSON.parse(raw);
 
-    // Polymarket WS sends different formats — handle all
-    const conditionId = msg.asset_id ?? msg.condition_id ?? msg.market ?? "";
-    const title = msg.question ?? msg.title ?? msg.market_slug ?? conditionId;
-    const outcome = msg.outcome ?? msg.side ?? "unknown";
-    const price = parseFloat(msg.price ?? msg.last_price ?? "0");
-    const size = parseFloat(msg.size ?? msg.amount ?? "0");
+    // Real format: { connection_id, payload: { asset, conditionId, eventSlug, ... } }
+    const p = msg.payload ?? msg;
 
-    if (!conditionId || isNaN(price) || isNaN(size)) return null;
+    // Try multiple field locations
+    const conditionId = p.conditionId ?? p.condition_id ?? p.asset_id ?? p.market ?? "";
+    const eventSlug = p.eventSlug ?? p.event_slug ?? "";
+    const title = p.question ?? p.title ?? p.market_slug ?? eventSlug ?? conditionId;
+    const outcome = p.outcome ?? p.side ?? p.type ?? "unknown";
+    const price = parseFloat(p.price ?? p.last_price ?? p.avgPrice ?? "0");
+    const size = parseFloat(p.size ?? p.amount ?? p.matchedAmount ?? "0");
+
+    // Also check for nested trade data
+    const tradePrice = price || parseFloat(p.tradePrice ?? "0");
+    const tradeSize = size || parseFloat(p.tradeAmount ?? "0");
+
+    if (!conditionId && !eventSlug) return null;
+    if (isNaN(tradePrice) || tradePrice === 0) return null;
+
+    // If size is 0, this might be a market update not a trade — still track it
+    const finalSize = tradeSize > 0 ? tradeSize : 1;
 
     return {
-      conditionId,
-      title,
+      conditionId: conditionId || eventSlug,
+      title: title || eventSlug,
       outcome,
-      price,
-      size,
-      usdAmount: price * size,
+      price: tradePrice,
+      size: finalSize,
+      usdAmount: tradePrice * finalSize,
     };
   } catch {
     return null;
@@ -235,29 +246,44 @@ function connect(): void {
     console.log("✅ Connected to Polymarket WebSocket\n");
     startTime = Date.now();
 
-    // Subscribe to all trades on activity topic
-    ws.send(
-      JSON.stringify({
-        subscriptions: [
-          {
-            topic: "activity",
-            type: "trades",
-          },
-        ],
-      })
-    );
+    // Try multiple subscription formats to find what works
+    const sub1 = {
+      action: "subscribe",
+      subscriptions: [
+        { topic: "activity", type: "trades" },
+        { topic: "activity", type: "*" },
+      ],
+    };
+    ws.send(JSON.stringify(sub1));
+    console.log("📡 Sent subscription format 1 (action + topic/type)");
 
-    console.log("📡 Subscribed to activity/trades");
-    console.log("👀 Watching for trades >= $500...\n");
+    // Also try the simpler format
+    const sub2 = {
+      type: "subscribe",
+      channel: "market_data",
+    };
+    ws.send(JSON.stringify(sub2));
+    console.log("📡 Sent subscription format 2 (type/channel)");
+
+    console.log("👀 Watching for trades >= $" + MIN_USD + "...\n");
   });
 
   ws.on("message", (data: WebSocket.Data) => {
     const raw = data.toString();
+
+    // Debug: log first 10 raw messages to see format
+    if (totalReceived < 10) {
+      console.log(`📩 RAW MSG #${totalReceived + 1}:`, raw.slice(0, 500));
+    }
+
     const trade = parseTrade(raw);
     if (trade) {
       processTrade(trade).catch((err) =>
         console.error("  ❌ processTrade error:", err)
       );
+    } else {
+      // Count messages that don't parse as trades
+      totalReceived++;
     }
   });
 
