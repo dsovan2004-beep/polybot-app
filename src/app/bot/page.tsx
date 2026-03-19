@@ -520,7 +520,7 @@ export default function BotDashboard() {
     };
   }, [loadMarkets, loadBtc]);
 
-  const perf = null; // Performance comes from a separate table — will be wired later
+  const perf: PerformanceRow | null = null; // Performance comes from a separate table — will be wired later
 
   return (
     <div style={{ minHeight: "100vh", background: css.bg, color: css.textPrimary }}>
