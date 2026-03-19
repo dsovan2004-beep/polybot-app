@@ -1,21 +1,53 @@
 // ============================================================================
-// GET /api/markets — Dashboard market data & performance snapshot
-// POST /api/markets — Record a new trade (from strategy engine)
+// GET /api/markets — Dashboard data (markets, signals, trades, performance)
+// POST /api/markets — Record a new trade
+// Matches Sprint 2 Supabase schema (snake_case columns)
 // ============================================================================
 
 export const runtime = "edge";
 
 import { NextRequest, NextResponse } from "next/server";
-import type { ApiResponse, Trade, Performance, DashboardData } from "@/lib/types";
-import {
-  getRecentTrades,
-  getRecentSignals,
-  getRecentWhaleAlerts,
-  getBotState,
-  computePerformance,
-  insertTrade,
-  getLatestSwarmResult,
+import type {
+  MarketRow,
+  SignalRow,
+  TradeRow,
+  PerformanceRow,
+  RebateRow,
 } from "@/lib/supabase";
+import {
+  getMarkets,
+  getRecentSignals,
+  getRecentTrades,
+  getOpenTrades,
+  getLatestPerformance,
+  getRecentRebates,
+  insertTrade,
+} from "@/lib/supabase";
+
+// ---------------------------------------------------------------------------
+// API response envelope
+// ---------------------------------------------------------------------------
+
+interface ApiResponse<T = unknown> {
+  ok: boolean;
+  data?: T;
+  error?: string;
+  timestamp: string;
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard shape
+// ---------------------------------------------------------------------------
+
+interface DashboardData {
+  markets: MarketRow[];
+  signals: SignalRow[];
+  openTrades: TradeRow[];
+  recentTrades: TradeRow[];
+  performance: PerformanceRow | null;
+  rebates: RebateRow[];
+  updatedAt: string;
+}
 
 // ---------------------------------------------------------------------------
 // GET — fetch dashboard data
@@ -24,43 +56,26 @@ import {
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const mode = (searchParams.get("mode") ?? "paper") as "paper" | "live";
+    const category = searchParams.get("category") ?? undefined;
     const limit = Math.min(Number(searchParams.get("limit") ?? 50), 200);
 
-    const [trades, signals, whaleAlerts, botState, performance] =
+    const [markets, signals, openTrades, recentTrades, performance, rebates] =
       await Promise.all([
-        getRecentTrades(limit, mode),
+        getMarkets(category, limit),
         getRecentSignals(30),
-        getRecentWhaleAlerts(20),
-        getBotState(),
-        computePerformance(mode),
+        getOpenTrades(),
+        getRecentTrades(limit),
+        getLatestPerformance(),
+        getRecentRebates(30),
       ]);
 
-    // Try to get latest swarm result for the most recent signal's market
-    const latestMarketId = signals[0]?.marketId ?? null;
-    const lastSwarm = latestMarketId
-      ? await getLatestSwarmResult(latestMarketId)
-      : null;
-
     const dashboard: DashboardData = {
-      botStatus: botState?.status ?? "idle",
-      mode,
+      markets,
+      signals,
+      openTrades,
+      recentTrades,
       performance,
-      positions: trades.filter(
-        (t) =>
-          (t.status === "filled" || t.status === "partially_filled") &&
-          t.closedAt === null
-      ),
-      recentSignals: signals,
-      whaleAlerts,
-      lastSwarmResult: lastSwarm,
-      wsState: {
-        connected: false, // WS state lives client-side
-        url: "",
-        reconnectAttempts: 0,
-        lastHeartbeat: null,
-        subscribedChannels: [],
-      },
+      rebates,
       updatedAt: new Date().toISOString(),
     };
 
@@ -79,32 +94,32 @@ export async function GET(req: NextRequest) {
 }
 
 // ---------------------------------------------------------------------------
-// POST — record a new trade from the strategy engine
+// POST — record a new trade
 // ---------------------------------------------------------------------------
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
-    // Validate minimum confidence rule (67%)
-    if (typeof body.aiConfidence === "number" && body.aiConfidence < 0.67) {
+    // Validate required fields
+    if (!body.direction) {
       return NextResponse.json<ApiResponse>(
         {
           ok: false,
-          error: "Trade rejected: AI confidence below 67% minimum",
+          error: "Missing required field: direction",
           timestamp: new Date().toISOString(),
         },
         { status: 400 }
       );
     }
 
-    // Validate allowed categories
+    // Validate allowed categories if market_id is provided with category
     const allowedCategories = ["ai_tech", "politics"];
     if (body.category && !allowedCategories.includes(body.category)) {
       return NextResponse.json<ApiResponse>(
         {
           ok: false,
-          error: `Trade rejected: category "${body.category}" not in allowed list`,
+          error: `Trade rejected: category "${body.category}" not allowed`,
           timestamp: new Date().toISOString(),
         },
         { status: 400 }
@@ -113,7 +128,7 @@ export async function POST(req: NextRequest) {
 
     const trade = await insertTrade(body);
 
-    return NextResponse.json<ApiResponse<Trade>>({
+    return NextResponse.json<ApiResponse<TradeRow>>({
       ok: true,
       data: trade,
       timestamp: new Date().toISOString(),

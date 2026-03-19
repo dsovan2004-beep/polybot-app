@@ -1,24 +1,91 @@
 // ============================================================================
-// PolyBot — Supabase Client & Database Helpers
-// Persistence layer for trades, signals, performance, and whale data
+// PolyBot — Supabase Client & Database Helpers (Sprint 2)
+// Matches 001_initial_schema.sql exactly: markets, signals, trades, rebates, performance
+// Column names use snake_case to match Postgres schema
 // ============================================================================
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import type {
-  Trade,
-  Signal,
-  Performance,
-  Rebate,
-  WhaleActivity,
-  WhaleAlert,
-  SwarmVote,
-  SwarmResult,
-  MakerOrder,
-  BotConfig,
-  TradingMode,
-  StrategyName,
-  BotStatus,
-} from "./types";
+
+// ---------------------------------------------------------------------------
+// Row types — match SQL schema exactly (snake_case)
+// ---------------------------------------------------------------------------
+
+export interface MarketRow {
+  id: string;
+  polymarket_id: string;
+  title: string;
+  category: string;
+  current_price: number | null;
+  volume_24h: number | null;
+  liquidity: number | null;
+  closes_at: string | null;
+  status: string;
+  resolved_value: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SignalRow {
+  id: string;
+  market_id: string | null;
+  strategy: string;
+  claude_vote: string | null;
+  gpt4o_vote: string | null;
+  gemini_vote: string | null;
+  consensus: string | null;
+  confidence: number | null;
+  ai_probability: number | null;
+  market_price: number | null;
+  price_gap: number | null;
+  reasoning: string | null;
+  acted_on: boolean;
+  created_at: string;
+}
+
+export interface TradeRow {
+  id: string;
+  signal_id: string | null;
+  market_id: string | null;
+  direction: string;
+  entry_price: number | null;
+  exit_price: number | null;
+  shares: number | null;
+  entry_cost: number | null;
+  exit_value: number | null;
+  pnl: number | null;
+  pnl_pct: number | null;
+  strategy: string | null;
+  status: string;
+  entry_at: string;
+  exit_at: string | null;
+  hold_hours: number | null;
+  notes: string | null;
+}
+
+export interface RebateRow {
+  id: string;
+  date: string;
+  usdc_earned: number | null;
+  markets_count: number | null;
+  volume: number | null;
+  created_at: string;
+}
+
+export interface PerformanceRow {
+  id: string;
+  date: string;
+  starting_balance: number | null;
+  ending_balance: number | null;
+  trades_count: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  pnl_day: number | null;
+  pnl_cumulative: number | null;
+  rebates_earned: number | null;
+  drawdown_pct: number | null;
+  kill_switch: boolean;
+}
 
 // ---------------------------------------------------------------------------
 // Client singleton
@@ -37,50 +104,100 @@ export function getSupabase(): SupabaseClient {
 }
 
 // ---------------------------------------------------------------------------
-// Database type map (mirrors Supabase table names)
+// Markets
 // ---------------------------------------------------------------------------
 
-export interface Database {
-  public: {
-    Tables: {
-      trades: { Row: Trade; Insert: Omit<Trade, "id" | "createdAt">; Update: Partial<Trade> };
-      signals: { Row: Signal; Insert: Omit<Signal, "id" | "createdAt">; Update: Partial<Signal> };
-      rebates: { Row: Rebate; Insert: Omit<Rebate, "id">; Update: Partial<Rebate> };
-      whale_activity: { Row: WhaleActivity; Insert: Omit<WhaleActivity, "id">; Update: Partial<WhaleActivity> };
-      whale_alerts: { Row: WhaleAlert; Insert: Omit<WhaleAlert, "id" | "createdAt">; Update: Partial<WhaleAlert> };
-      swarm_votes: { Row: SwarmVote; Insert: Omit<SwarmVote, "id">; Update: Partial<SwarmVote> };
-      swarm_results: { Row: SwarmResult; Insert: Omit<SwarmResult, "id" | "createdAt">; Update: Partial<SwarmResult> };
-      maker_orders: { Row: MakerOrder; Insert: Omit<MakerOrder, "id">; Update: Partial<MakerOrder> };
-      bot_state: { Row: BotStateRow; Insert: Omit<BotStateRow, "id">; Update: Partial<BotStateRow> };
-    };
-  };
+export async function getMarkets(category?: string, limit = 50) {
+  let query = getSupabase()
+    .from("markets")
+    .select("*")
+    .eq("status", "active")
+    .order("volume_24h", { ascending: false })
+    .limit(limit);
+  if (category) query = query.eq("category", category);
+  const { data, error } = await query;
+  if (error) throw new Error(`getMarkets: ${error.message}`);
+  return data as MarketRow[];
 }
 
-interface BotStateRow {
-  id: string;
-  status: BotStatus;
-  mode: TradingMode;
-  activeStrategies: StrategyName[];
-  config: BotConfig;
-  startedAt: string;
-  updatedAt: string;
+export async function getMarketById(id: string) {
+  const { data, error } = await getSupabase()
+    .from("markets")
+    .select("*")
+    .eq("id", id)
+    .single();
+  if (error && error.code !== "PGRST116") {
+    throw new Error(`getMarketById: ${error.message}`);
+  }
+  return (data as MarketRow) ?? null;
+}
+
+export async function upsertMarket(
+  market: Omit<MarketRow, "id" | "created_at" | "updated_at">
+) {
+  const { data, error } = await getSupabase()
+    .from("markets")
+    .upsert(market, { onConflict: "polymarket_id" })
+    .select()
+    .single();
+  if (error) throw new Error(`upsertMarket: ${error.message}`);
+  return data as MarketRow;
 }
 
 // ---------------------------------------------------------------------------
-// Trade CRUD
+// Signals
 // ---------------------------------------------------------------------------
 
-export async function insertTrade(trade: Omit<Trade, "id" | "createdAt">) {
+export async function insertSignal(
+  signal: Omit<SignalRow, "id" | "created_at">
+) {
+  const { data, error } = await getSupabase()
+    .from("signals")
+    .insert(signal)
+    .select()
+    .single();
+  if (error) throw new Error(`insertSignal: ${error.message}`);
+  return data as SignalRow;
+}
+
+export async function getRecentSignals(limit = 30) {
+  const { data, error } = await getSupabase()
+    .from("signals")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`getRecentSignals: ${error.message}`);
+  return data as SignalRow[];
+}
+
+export async function getSignalsByMarket(marketId: string, limit = 20) {
+  const { data, error } = await getSupabase()
+    .from("signals")
+    .select("*")
+    .eq("market_id", marketId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`getSignalsByMarket: ${error.message}`);
+  return data as SignalRow[];
+}
+
+// ---------------------------------------------------------------------------
+// Trades
+// ---------------------------------------------------------------------------
+
+export async function insertTrade(
+  trade: Omit<TradeRow, "id" | "entry_at">
+) {
   const { data, error } = await getSupabase()
     .from("trades")
     .insert(trade)
     .select()
     .single();
   if (error) throw new Error(`insertTrade: ${error.message}`);
-  return data as Trade;
+  return data as TradeRow;
 }
 
-export async function updateTrade(id: string, patch: Partial<Trade>) {
+export async function updateTrade(id: string, patch: Partial<TradeRow>) {
   const { data, error } = await getSupabase()
     .from("trades")
     .update(patch)
@@ -88,291 +205,125 @@ export async function updateTrade(id: string, patch: Partial<Trade>) {
     .select()
     .single();
   if (error) throw new Error(`updateTrade: ${error.message}`);
-  return data as Trade;
+  return data as TradeRow;
 }
 
-export async function getRecentTrades(limit = 50, mode?: TradingMode) {
-  let query = getSupabase()
-    .from("trades")
-    .select("*")
-    .order("createdAt", { ascending: false })
-    .limit(limit);
-  if (mode) query = query.eq("mode", mode);
-  const { data, error } = await query;
-  if (error) throw new Error(`getRecentTrades: ${error.message}`);
-  return data as Trade[];
-}
-
-export async function getTradesByStrategy(strategy: StrategyName, limit = 100) {
+export async function getRecentTrades(limit = 50) {
   const { data, error } = await getSupabase()
     .from("trades")
     .select("*")
-    .eq("strategyName", strategy)
-    .order("createdAt", { ascending: false })
+    .order("entry_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`getRecentTrades: ${error.message}`);
+  return data as TradeRow[];
+}
+
+export async function getOpenTrades() {
+  const { data, error } = await getSupabase()
+    .from("trades")
+    .select("*")
+    .eq("status", "open")
+    .order("entry_at", { ascending: false });
+  if (error) throw new Error(`getOpenTrades: ${error.message}`);
+  return data as TradeRow[];
+}
+
+export async function getTradesByStrategy(strategy: string, limit = 100) {
+  const { data, error } = await getSupabase()
+    .from("trades")
+    .select("*")
+    .eq("strategy", strategy)
+    .order("entry_at", { ascending: false })
     .limit(limit);
   if (error) throw new Error(`getTradesByStrategy: ${error.message}`);
-  return data as Trade[];
+  return data as TradeRow[];
 }
 
 // ---------------------------------------------------------------------------
-// Signal CRUD
+// Rebates
 // ---------------------------------------------------------------------------
 
-export async function insertSignal(signal: Omit<Signal, "id" | "createdAt">) {
-  const { data, error } = await getSupabase()
-    .from("signals")
-    .insert(signal)
-    .select()
-    .single();
-  if (error) throw new Error(`insertSignal: ${error.message}`);
-  return data as Signal;
-}
-
-export async function getRecentSignals(limit = 30) {
-  const { data, error } = await getSupabase()
-    .from("signals")
-    .select("*")
-    .order("createdAt", { ascending: false })
-    .limit(limit);
-  if (error) throw new Error(`getRecentSignals: ${error.message}`);
-  return data as Signal[];
-}
-
-// ---------------------------------------------------------------------------
-// Rebate CRUD
-// ---------------------------------------------------------------------------
-
-export async function insertRebate(rebate: Omit<Rebate, "id">) {
+export async function insertRebate(rebate: Omit<RebateRow, "id" | "created_at">) {
   const { data, error } = await getSupabase()
     .from("rebates")
     .insert(rebate)
     .select()
     .single();
   if (error) throw new Error(`insertRebate: ${error.message}`);
-  return data as Rebate;
+  return data as RebateRow;
+}
+
+export async function getRecentRebates(limit = 30) {
+  const { data, error } = await getSupabase()
+    .from("rebates")
+    .select("*")
+    .order("date", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`getRecentRebates: ${error.message}`);
+  return data as RebateRow[];
 }
 
 export async function getTotalRebates(): Promise<number> {
   const { data, error } = await getSupabase()
     .from("rebates")
-    .select("amount");
+    .select("usdc_earned");
   if (error) throw new Error(`getTotalRebates: ${error.message}`);
-  return (data as { amount: number }[]).reduce((sum, r) => sum + r.amount, 0);
+  return (data as { usdc_earned: number | null }[]).reduce(
+    (sum, r) => sum + (r.usdc_earned ?? 0),
+    0
+  );
 }
 
 // ---------------------------------------------------------------------------
-// Whale Activity & Alerts
+// Performance
 // ---------------------------------------------------------------------------
 
-export async function insertWhaleActivity(
-  activity: Omit<WhaleActivity, "id">
+export async function upsertPerformance(
+  perf: Omit<PerformanceRow, "id">
 ) {
   const { data, error } = await getSupabase()
-    .from("whale_activity")
-    .insert(activity)
+    .from("performance")
+    .upsert(perf, { onConflict: "date" })
     .select()
     .single();
-  if (error) throw new Error(`insertWhaleActivity: ${error.message}`);
-  return data as WhaleActivity;
+  if (error) throw new Error(`upsertPerformance: ${error.message}`);
+  return data as PerformanceRow;
 }
 
-export async function insertWhaleAlert(alert: Omit<WhaleAlert, "id" | "createdAt">) {
+export async function getLatestPerformance() {
   const { data, error } = await getSupabase()
-    .from("whale_alerts")
-    .insert(alert)
-    .select()
-    .single();
-  if (error) throw new Error(`insertWhaleAlert: ${error.message}`);
-  return data as WhaleAlert;
-}
-
-export async function getRecentWhaleAlerts(limit = 20) {
-  const { data, error } = await getSupabase()
-    .from("whale_alerts")
+    .from("performance")
     .select("*")
-    .order("createdAt", { ascending: false })
-    .limit(limit);
-  if (error) throw new Error(`getRecentWhaleAlerts: ${error.message}`);
-  return data as WhaleAlert[];
-}
-
-// ---------------------------------------------------------------------------
-// Swarm (AI consensus)
-// ---------------------------------------------------------------------------
-
-export async function insertSwarmVote(vote: Omit<SwarmVote, "id">) {
-  const { data, error } = await getSupabase()
-    .from("swarm_votes")
-    .insert(vote)
-    .select()
-    .single();
-  if (error) throw new Error(`insertSwarmVote: ${error.message}`);
-  return data as SwarmVote;
-}
-
-export async function insertSwarmResult(result: Omit<SwarmResult, "id" | "createdAt">) {
-  const { data, error } = await getSupabase()
-    .from("swarm_results")
-    .insert(result)
-    .select()
-    .single();
-  if (error) throw new Error(`insertSwarmResult: ${error.message}`);
-  return data as SwarmResult;
-}
-
-export async function getLatestSwarmResult(marketId: string) {
-  const { data, error } = await getSupabase()
-    .from("swarm_results")
-    .select("*")
-    .eq("marketId", marketId)
-    .order("createdAt", { ascending: false })
+    .order("date", { ascending: false })
     .limit(1)
     .single();
   if (error && error.code !== "PGRST116") {
-    throw new Error(`getLatestSwarmResult: ${error.message}`);
+    throw new Error(`getLatestPerformance: ${error.message}`);
   }
-  return (data as SwarmResult) ?? null;
+  return (data as PerformanceRow) ?? null;
 }
 
-// ---------------------------------------------------------------------------
-// Maker Orders
-// ---------------------------------------------------------------------------
-
-export async function insertMakerOrder(order: Omit<MakerOrder, "id">) {
+export async function getPerformanceHistory(days = 30) {
   const { data, error } = await getSupabase()
-    .from("maker_orders")
-    .insert(order)
-    .select()
-    .single();
-  if (error) throw new Error(`insertMakerOrder: ${error.message}`);
-  return data as MakerOrder;
-}
-
-export async function getOpenMakerOrders(marketId?: string) {
-  let query = getSupabase()
-    .from("maker_orders")
+    .from("performance")
     .select("*")
-    .in("status", ["pending", "open"])
-    .order("placedAt", { ascending: false });
-  if (marketId) query = query.eq("marketId", marketId);
-  const { data, error } = await query;
-  if (error) throw new Error(`getOpenMakerOrders: ${error.message}`);
-  return data as MakerOrder[];
-}
-
-export async function updateMakerOrder(id: string, patch: Partial<MakerOrder>) {
-  const { data, error } = await getSupabase()
-    .from("maker_orders")
-    .update(patch)
-    .eq("id", id)
-    .select()
-    .single();
-  if (error) throw new Error(`updateMakerOrder: ${error.message}`);
-  return data as MakerOrder;
+    .order("date", { ascending: false })
+    .limit(days);
+  if (error) throw new Error(`getPerformanceHistory: ${error.message}`);
+  return data as PerformanceRow[];
 }
 
 // ---------------------------------------------------------------------------
-// Bot State
+// Realtime subscriptions
 // ---------------------------------------------------------------------------
 
-export async function getBotState() {
-  const { data, error } = await getSupabase()
-    .from("bot_state")
-    .select("*")
-    .order("updatedAt", { ascending: false })
-    .limit(1)
-    .single();
-  if (error && error.code !== "PGRST116") {
-    throw new Error(`getBotState: ${error.message}`);
-  }
-  return (data as BotStateRow) ?? null;
-}
-
-export async function upsertBotState(state: Omit<BotStateRow, "id">) {
-  const { data, error } = await getSupabase()
-    .from("bot_state")
-    .upsert(state, { onConflict: "id" })
-    .select()
-    .single();
-  if (error) throw new Error(`upsertBotState: ${error.message}`);
-  return data as BotStateRow;
-}
-
-// ---------------------------------------------------------------------------
-// Performance — computed from trades
-// ---------------------------------------------------------------------------
-
-export async function computePerformance(
-  mode: TradingMode = "paper",
-  windowHours = 24
-): Promise<Performance> {
-  const since = new Date(
-    Date.now() - windowHours * 60 * 60 * 1000
-  ).toISOString();
-
-  const { data: trades, error } = await getSupabase()
-    .from("trades")
-    .select("*")
-    .eq("mode", mode)
-    .gte("createdAt", since)
-    .order("createdAt", { ascending: false });
-
-  if (error) throw new Error(`computePerformance: ${error.message}`);
-  const all = (trades ?? []) as Trade[];
-
-  const closed = all.filter((t) => t.pnl !== null);
-  const wins = closed.filter((t) => (t.pnl ?? 0) > 0);
-  const totalPnl = closed.reduce((s, t) => s + (t.pnl ?? 0), 0);
-  const unrealized = all
-    .filter((t) => t.status === "filled" && t.pnl === null)
-    .reduce((s, t) => s + (t.avgFillPrice ?? 0) * t.filledSize, 0);
-
-  const totalRebates = await getTotalRebates();
-
-  const now = new Date().toISOString();
-
-  return {
-    totalPnl: totalPnl + unrealized,
-    realizedPnl: totalPnl,
-    unrealizedPnl: unrealized,
-    totalTrades: all.length,
-    winRate: closed.length > 0 ? wins.length / closed.length : 0,
-    avgConfidence:
-      all.length > 0
-        ? all.reduce((s, t) => s + t.aiConfidence, 0) / all.length
-        : 0,
-    totalVolume: all.reduce((s, t) => s + t.size * t.price, 0),
-    totalRebates,
-    sharpeRatio: null, // needs more data for proper Sharpe
-    maxDrawdownPercent: 0, // calculated separately in risk engine
-    drawdownPercent24h: 0,
-    equity: 0, // set by caller with wallet balance
-    exposure: all
-      .filter((t) => t.status === "filled" || t.status === "partially_filled")
-      .reduce((s, t) => s + t.filledSize * (t.avgFillPrice ?? 0), 0),
-    openPositionCount: all.filter(
-      (t) => t.status === "filled" && t.closedAt === null
-    ).length,
-    killSwitchTriggered: false,
-    periodStart: since,
-    periodEnd: now,
-    updatedAt: now,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Realtime subscriptions (Supabase Realtime)
-// ---------------------------------------------------------------------------
-
-export function subscribeToTrades(
-  callback: (trade: Trade) => void
-): () => void {
+export function subscribeToTrades(callback: (trade: TradeRow) => void): () => void {
   const channel = getSupabase()
     .channel("trades-realtime")
     .on(
       "postgres_changes",
       { event: "INSERT", schema: "public", table: "trades" },
-      (payload) => callback(payload.new as Trade)
+      (payload) => callback(payload.new as TradeRow)
     )
     .subscribe();
 
@@ -381,15 +332,13 @@ export function subscribeToTrades(
   };
 }
 
-export function subscribeToWhaleAlerts(
-  callback: (alert: WhaleAlert) => void
-): () => void {
+export function subscribeToSignals(callback: (signal: SignalRow) => void): () => void {
   const channel = getSupabase()
-    .channel("whale-alerts-realtime")
+    .channel("signals-realtime")
     .on(
       "postgres_changes",
-      { event: "INSERT", schema: "public", table: "whale_alerts" },
-      (payload) => callback(payload.new as WhaleAlert)
+      { event: "INSERT", schema: "public", table: "signals" },
+      (payload) => callback(payload.new as SignalRow)
     )
     .subscribe();
 
