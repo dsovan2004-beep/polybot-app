@@ -42,11 +42,14 @@ interface MarketInput {
   closes_at?: string;
 }
 
+type StrategyType = "news_lag" | "sentiment_fade" | "logical_arb" | "maker" | "unknown";
+
 interface ClaudeSignal {
   vote: "YES" | "NO" | "NO_TRADE";
   probability: number;
   confidence: number;
   reason: string;
+  strategy: StrategyType;
 }
 
 // ---------------------------------------------------------------------------
@@ -60,7 +63,8 @@ Analyze this market. Output ONLY valid JSON:
   "vote": "YES" or "NO" or "NO_TRADE",
   "probability": 0.00 to 1.00,
   "confidence": 0 to 100,
-  "reason": "one sentence max"
+  "reason": "one sentence max",
+  "strategy": "news_lag" or "sentiment_fade" or "logical_arb" or "maker" or "unknown"
 }
 
 Rules:
@@ -128,11 +132,15 @@ async function callClaude(userPrompt: string): Promise<ClaudeSignal> {
     throw new Error(`Invalid vote: ${parsed.vote}`);
   }
 
+  const validStrategies: StrategyType[] = ["news_lag", "sentiment_fade", "logical_arb", "maker", "unknown"];
+  const strategy = validStrategies.includes(parsed.strategy) ? parsed.strategy as StrategyType : "unknown";
+
   return {
     vote: vote as "YES" | "NO" | "NO_TRADE",
     probability: Math.max(0, Math.min(1, Number(parsed.probability))),
     confidence: Math.max(0, Math.min(100, Math.round(Number(parsed.confidence)))),
     reason: String(parsed.reason ?? ""),
+    strategy,
   };
 }
 
@@ -148,7 +156,7 @@ async function saveSignal(
 
   const row: Omit<SignalRow, "id" | "created_at"> = {
     market_id: market.id,
-    strategy: "ai_swarm",
+    strategy: signal.strategy,
     claude_vote: signal.vote,
     gpt4o_vote: null,
     gemini_vote: null,
