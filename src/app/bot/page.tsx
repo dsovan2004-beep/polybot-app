@@ -32,12 +32,10 @@ const css = {
 // API response shapes
 // ---------------------------------------------------------------------------
 
-interface DashboardData {
+interface MarketsApiData {
   markets: MarketRow[];
-  signals: SignalRow[];
-  openTrades: TradeRow[];
-  recentTrades: TradeRow[];
-  performance: PerformanceRow | null;
+  whales: WhaleRow[];
+  connected: boolean;
 }
 
 interface Btc5MinData {
@@ -67,11 +65,37 @@ interface WhaleRow {
 // Fetchers
 // ---------------------------------------------------------------------------
 
-async function fetchDashboard(): Promise<DashboardData> {
+async function fetchMarkets(): Promise<MarketsApiData> {
   const res = await fetch("/api/markets");
   const json = await res.json();
-  if (!json.ok) throw new Error(json.error ?? "Failed to load");
+  if (!json.ok) throw new Error(json.error ?? "Failed to load markets");
   return json.data;
+}
+
+async function fetchSwarmSignal(market: MarketRow): Promise<SignalRow | null> {
+  try {
+    const res = await fetch("/api/swarm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        market: {
+          id: market.id,
+          polymarket_id: market.polymarket_id,
+          title: market.title,
+          category: market.category,
+          current_price: market.current_price ?? 0.5,
+          volume_24h: market.volume_24h,
+          liquidity: market.liquidity,
+          closes_at: market.closes_at,
+        },
+      }),
+    });
+    const json = await res.json();
+    if (!json.ok) return null;
+    return json.data as SignalRow;
+  } catch {
+    return null;
+  }
 }
 
 async function fetchBtc5Min(): Promise<Btc5MinData> {
@@ -430,20 +454,50 @@ function WhaleRow({ whale }: { whale: WhaleRow }) {
 // ---------------------------------------------------------------------------
 
 export default function BotDashboard() {
-  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
-  const [btc, setBtc] = useState<Btc5MinData | null>(null);
+  const [markets, setMarkets] = useState<MarketRow[]>([]);
+  const [signals, setSignals] = useState<SignalRow[]>([]);
   const [whales, setWhales] = useState<WhaleRow[]>([]);
+  const [btc, setBtc] = useState<Btc5MinData | null>(null);
+  const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch dashboard data (every 30s)
-  const loadDashboard = useCallback(async () => {
+  // Track which markets we've already sent to swarm (avoid duplicate calls)
+  const [analyzedIds, setAnalyzedIds] = useState<Set<string>>(new Set());
+
+  // Fetch markets + whales (every 30s)
+  const loadMarkets = useCallback(async () => {
     try {
-      const d = await fetchDashboard();
-      setDashboard(d);
+      const data = await fetchMarkets();
+      setMarkets(data.markets);
+      setWhales(data.whales);
+      setConnected(data.connected);
+
+      // For each NEW market, call swarm to get AI signal
+      const newMarkets = data.markets.filter((m) => !analyzedIds.has(m.id));
+      if (newMarkets.length > 0) {
+        const newIds = new Set(analyzedIds);
+        const signalPromises = newMarkets.slice(0, 3).map(async (m) => {
+          newIds.add(m.id);
+          return fetchSwarmSignal(m);
+        });
+        setAnalyzedIds(newIds);
+
+        const results = await Promise.allSettled(signalPromises);
+        const newSignals = results
+          .filter((r): r is PromiseFulfilledResult<SignalRow | null> => r.status === "fulfilled")
+          .map((r) => r.value)
+          .filter((s): s is SignalRow => s !== null);
+
+        if (newSignals.length > 0) {
+          setSignals((prev) => [...newSignals, ...prev].slice(0, 30));
+        }
+      }
+
+      setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
     }
-  }, []);
+  }, [analyzedIds]);
 
   // Fetch BTC 5-min data (every 5s)
   const loadBtc = useCallback(async () => {
@@ -456,17 +510,17 @@ export default function BotDashboard() {
   }, []);
 
   useEffect(() => {
-    loadDashboard();
+    loadMarkets();
     loadBtc();
-    const dashInterval = setInterval(loadDashboard, 30_000);
+    const dashInterval = setInterval(loadMarkets, 30_000);
     const btcInterval = setInterval(loadBtc, 5_000);
     return () => {
       clearInterval(dashInterval);
       clearInterval(btcInterval);
     };
-  }, [loadDashboard, loadBtc]);
+  }, [loadMarkets, loadBtc]);
 
-  const perf = dashboard?.performance;
+  const perf = null; // Performance comes from a separate table — will be wired later
 
   return (
     <div style={{ minHeight: "100vh", background: css.bg, color: css.textPrimary }}>
@@ -553,7 +607,7 @@ export default function BotDashboard() {
           />
           <StatCard
             label="Signals Today"
-            value={String(dashboard?.signals.length ?? 0)}
+            value={String(signals.length)}
           />
           <StatCard
             label="USDC Rebates"
@@ -574,17 +628,18 @@ export default function BotDashboard() {
           {/* RIGHT — Live Signals */}
           <div>
             <p style={{ fontSize: 12, fontWeight: 600, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-              Live Signals ({dashboard?.signals.length ?? 0})
+              Live Signals ({signals.length})
+              {connected && <span style={{ color: "#4ade80", marginLeft: 8, fontSize: 10 }}>WS CONNECTED</span>}
             </p>
             <div style={{ maxHeight: 400, overflowY: "auto" }}>
-              {(!dashboard || dashboard.signals.length === 0) ? (
+              {signals.length === 0 ? (
                 <Card>
                   <p style={{ color: css.textSecondary, textAlign: "center", padding: 24, fontSize: 13 }}>
-                    No signals yet
+                    {markets.length > 0 ? "Analyzing markets..." : "No signals yet"}
                   </p>
                 </Card>
               ) : (
-                dashboard.signals.map((s) => (
+                signals.map((s) => (
                   <SignalCard key={s.id} signal={s} />
                 ))
               )}

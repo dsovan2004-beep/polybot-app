@@ -53,7 +53,7 @@ interface ClaudeSignal {
 // System prompt — domain expertise
 // ---------------------------------------------------------------------------
 
-const SYSTEM_PROMPT = `You are analyzing a Polymarket prediction market as a specialist with 20+ years enterprise IT and security experience, 2 completed M&A integrations, deep expertise in Okta, CrowdStrike, Zscaler, 4x SOC 2 Type II audit lead, and active AI red team testing experience.
+const SYSTEM_PROMPT = `You are a prediction market analyst for PolyBot, an AI-powered Polymarket trading tool. You analyze markets using probability theory, news sentiment, and risk assessment. You are calibrated, data-driven, and skeptical of narratives.
 
 Analyze this market. Output ONLY valid JSON:
 {
