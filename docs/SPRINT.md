@@ -20,23 +20,25 @@
 
 ---
 
-## Sprint 2: Wire Up Real Data — IN PROGRESS 🔧
+## Sprint 2: Wire Up Real Data — IN PROGRESS 🔄
 **Dates:** Mar 24–30
-**Goal:** Supabase schema, trade logging, PnL dashboard, kill switch, rebate tracker
+**Goal:** Supabase schema, API keys, Claude-only swarm, live dashboard with real data
 
 | Task | Status |
 |------|--------|
-| Supabase migration (5 tables) | ⬜ NOT STARTED |
-| Run migration in Supabase SQL Editor | ⬜ NOT STARTED |
-| Add env vars to Cloudflare Pages | ⬜ NOT STARTED |
-| Create .env.local template | ⬜ NOT STARTED |
+| Supabase project created | ✅ COMPLETE |
+| SQL migration ran successfully (5 tables) | ✅ COMPLETE |
+| .env.local updated with Supabase keys | ✅ COMPLETE |
+| Anthropic API key | ⬜ PENDING |
+| Swarm updated to Claude-only (3 perspectives) | ⬜ PENDING |
+| Keys added to Cloudflare env vars | ⬜ PENDING |
 | Update supabase.ts to match new schema | ⬜ NOT STARTED |
 | Update types.ts to match new schema | ⬜ NOT STARTED |
 | Wire /api/markets to real Supabase data | ⬜ NOT STARTED |
-| Wire /api/swarm to real AI providers | ⬜ NOT STARTED |
 | Dashboard fetches live data | ⬜ NOT STARTED |
 | Kill switch + drawdown monitor | ⬜ NOT STARTED |
 | Rebate tracker (Tab3) | ⬜ NOT STARTED |
+| Live dashboard test | ⬜ NOT STARTED |
 | End-to-end test: signal → trade → dashboard | ⬜ NOT STARTED |
 
 ---
