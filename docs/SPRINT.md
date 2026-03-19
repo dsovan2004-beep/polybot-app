@@ -32,7 +32,6 @@
 | markets/route.ts rewritten for Sprint 2 schema | ✅ COMPLETE |
 | bot/page.tsx rewritten for Sprint 2 schema | ✅ COMPLETE |
 | PolyBot generalized — configurable domain/categories | ✅ COMPLETE |
-| docs/BIBLE.md, PLAYBOOK.md, ROADMAP.md updated | ✅ COMPLETE |
 
 ---
 
@@ -49,29 +48,43 @@
 | BTC countdown timer working | ✅ COMPLETE |
 | Liquidation progress meter working | ✅ COMPLETE |
 | Paper trade mode active | ✅ COMPLETE |
-| 4 stat cards (P&L, Win Rate, Signals, Rebates) | ✅ COMPLETE |
-| Kill switch button in header | ✅ COMPLETE |
-| Whale Watch panel | ✅ COMPLETE |
 
 ---
 
-## Sprint 4: Wire Real Data Feeds — IN PROGRESS 🔄
-**Dates:** Mar 19–20
+## Sprint 4: Wire Real Data Feeds — COMPLETE ✅
+**Dates:** Mar 19
 **Goal:** Connect live Polymarket data, fire real AI signals, populate dashboard
+
+| Deliverable | Status |
+|-------------|--------|
+| src/lib/polymarket.ts — Polymarket WS feed with filters | ✅ COMPLETE |
+| src/app/api/markets/route.ts — live markets + whales from Supabase | ✅ COMPLETE |
+| src/app/api/swarm/route.ts — Claude signals with strategy classification | ✅ COMPLETE |
+| src/app/bot/page.tsx — wired to live data (polls every 30s) | ✅ COMPLETE |
+| src/scripts/feed.ts — standalone local data ingestion script | ✅ COMPLETE |
+| whale_activity table created in Supabase | ✅ COMPLETE |
+| Personal references removed from codebase | ✅ COMPLETE |
+| General strategy framework in swarm prompt | ✅ COMPLETE |
+
+**Key Discovery — Sprint 4:**
+Cloudflare Workers are STATELESS — they spin up for a request and die. Cannot hold persistent WebSocket connections. Solution: feed.ts runs locally (or on Railway), connects to Polymarket WS, saves trades to Supabase. Dashboard reads from Supabase every 30 seconds.
+
+---
+
+## Sprint 5: First Real Money — IN PROGRESS 🔄
+**Goal:** Deploy feed 24/7, fund wallet, place first MAKER order, earn first USDC rebate
 
 | Task | Status |
 |------|--------|
-| Wire Polymarket WebSocket (real trades) | 🔄 IN PROGRESS |
-| Wire AI swarm to real markets | 🔄 IN PROGRESS |
-| Get live signals firing | ⬜ NOT STARTED |
-| Get whale watch populating | ⬜ NOT STARTED |
-| Update bot/page.tsx to fetch live data | ⬜ NOT STARTED |
-| First real signal within 24hrs of deploy | ⬜ TARGET |
+| Deploy feed.ts to Railway (24/7, no Mac needed) | ⬜ NOT STARTED |
+| Set up Polymarket wallet + private key | ⬜ NOT STARTED |
+| Fund wallet with $200 USDC | ⬜ NOT STARTED |
+| Get Polymarket API key | ⬜ NOT STARTED |
+| Place first MAKER order on BTC 5-min market | ⬜ NOT STARTED |
+| Earn first USDC rebate | ⬜ NOT STARTED |
+| Validate 30 paper signals before scaling | ⬜ NOT STARTED |
 
 ---
 
-## Sprint 5: Auto Execute + Alerts (Planned)
-**Goal:** Polymarket API key + wallet, 30 paper trade validation, auto-execute, Telegram alerts
-
 ## Sprint 6: Scale + Diversify (Planned)
-**Goal:** Kalshi integration, scale to $5K, model upgrades
+**Goal:** Scale to $500+, Kelly sizer, Telegram alerts, Kalshi integration

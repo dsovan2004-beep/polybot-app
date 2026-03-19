@@ -29,5 +29,11 @@ Strategies: Maker Bot, AI News Lag, Logical Arbitrage
 - Sprint 1: COMPLETE ✅
 - Sprint 2: COMPLETE ✅
 - Sprint 3: COMPLETE ✅
-- Sprint 4: IN PROGRESS 🔄
+- Sprint 4: COMPLETE ✅
+- Sprint 5: IN PROGRESS 🔄 — First real money
 - Site live at: polybot-app.pages.dev
+
+## Architecture (IMPORTANT)
+Cloudflare Workers are STATELESS — cannot hold persistent WebSocket connections.
+Feed script (feed.ts) must run on Railway or another persistent server — NOT on Cloudflare Workers.
+Data flow: Railway feed.ts → Supabase → Dashboard
