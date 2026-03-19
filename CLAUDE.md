@@ -27,5 +27,7 @@ Strategies: Maker Bot, AI News Lag, Logical Arbitrage
 
 ## Sprint Status
 - Sprint 1: COMPLETE ✅
-- Sprint 2: IN PROGRESS 🔧
+- Sprint 2: COMPLETE ✅
+- Sprint 3: COMPLETE ✅
+- Sprint 4: IN PROGRESS 🔄
 - Site live at: polybot-app.pages.dev

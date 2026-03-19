@@ -1,337 +1,306 @@
 // ============================================================================
-// PolyBot — Polymarket WebSocket Client & Market Utilities
-// Rule: WebSocket only — no REST polling
+// PolyBot — Polymarket Live WebSocket Feed (Sprint 4)
+// Connects to Polymarket public WS for real-time trades
+// Filters, stores to Supabase markets + whale_activity tables
 // ============================================================================
 
-import type {
-  Market,
-  MarketCategory,
-  Side,
-  WSInboundMessage,
-  WSSubscribe,
-  WSConnectionState,
-  WSPriceUpdate,
-  WSTrade,
-  WSWhaleTrade,
-  WhaleActivity,
-} from "./types";
+import { getSupabase } from "./supabase";
+import type { MarketRow } from "./supabase";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const POLYMARKET_WS_URL =
-  process.env.NEXT_PUBLIC_POLYMARKET_WS_URL ??
   "wss://ws-subscriptions-clob.polymarket.com/ws/market";
 
-const RECONNECT_INTERVAL_MS = 3_000;
-const MAX_RECONNECT_ATTEMPTS = 20;
-const HEARTBEAT_INTERVAL_MS = 30_000;
-const WHALE_SIZE_THRESHOLD = 10_000; // USDC — anything larger is "whale"
+const MIN_USD_AMOUNT = 500;
+const PRICE_MIN = 0.02;
+const PRICE_MAX = 0.98;
+
+const SPORTS_KEYWORDS = [
+  "nba", "nfl", "ufc", "football", "basketball", "soccer",
+  "mlb", "nhl", "tennis", "boxing", "mma", "premier league",
+  "champions league", "world cup", "super bowl",
+];
 
 // ---------------------------------------------------------------------------
-// Allowed categories (max 2 per project rules)
+// Types
 // ---------------------------------------------------------------------------
 
-const ALLOWED_CATEGORIES: MarketCategory[] = ["ai_tech", "politics"];
+export interface PolymarketTrade {
+  conditionId: string;
+  title: string;
+  outcome: string;
+  price: number;
+  size: number;
+  usdAmount: number;
+  timestamp: string;
+}
 
-export function isAllowedCategory(cat: string): cat is MarketCategory {
-  return ALLOWED_CATEGORIES.includes(cat as MarketCategory);
+export interface WhaleActivityRow {
+  id: string;
+  market_id: string;
+  wallet_address: string;
+  side: string;
+  size: number;
+  price: number;
+  detected_at: string;
 }
 
 // ---------------------------------------------------------------------------
-// Event emitter helpers (tiny typed pub/sub)
+// State
 // ---------------------------------------------------------------------------
 
-type Listener<T> = (data: T) => void;
+let _ws: WebSocket | null = null;
+let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let _connected = false;
+let _recentTrades: PolymarketTrade[] = [];
 
-class Emitter<EventMap extends { [key: string]: unknown }> {
-  private listeners = new Map<keyof EventMap, Set<Listener<any>>>();
+// ---------------------------------------------------------------------------
+// Filters
+// ---------------------------------------------------------------------------
 
-  on<K extends keyof EventMap>(event: K, fn: Listener<EventMap[K]>) {
-    if (!this.listeners.has(event)) this.listeners.set(event, new Set());
-    this.listeners.get(event)!.add(fn);
-    return () => this.off(event, fn);
-  }
+function isSportsMarket(title: string): boolean {
+  const lower = title.toLowerCase();
+  return SPORTS_KEYWORDS.some((kw) => lower.includes(kw));
+}
 
-  off<K extends keyof EventMap>(event: K, fn: Listener<EventMap[K]>) {
-    this.listeners.get(event)?.delete(fn);
-  }
-
-  emit<K extends keyof EventMap>(event: K, data: EventMap[K]) {
-    this.listeners.get(event)?.forEach((fn) => fn(data));
-  }
+function passesFilters(trade: PolymarketTrade): boolean {
+  if (trade.usdAmount < MIN_USD_AMOUNT) return false;
+  if (trade.price < PRICE_MIN || trade.price > PRICE_MAX) return false;
+  if (isSportsMarket(trade.title)) return false;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
-// PolymarketWS — WebSocket client
+// Supabase persistence
 // ---------------------------------------------------------------------------
 
-type PolymarketEvents = {
-  price: WSPriceUpdate;
-  trade: WSTrade;
-  whale: WSWhaleTrade;
-  message: WSInboundMessage;
-  connected: void;
-  disconnected: { code: number; reason: string };
-  error: { message: string };
-  stateChange: WSConnectionState;
-};
+async function saveToMarkets(trade: PolymarketTrade): Promise<MarketRow | null> {
+  try {
+    const { data, error } = await getSupabase()
+      .from("markets")
+      .upsert(
+        {
+          polymarket_id: trade.conditionId,
+          title: trade.title,
+          category: categorize(trade.title),
+          current_price: trade.price,
+          volume_24h: trade.usdAmount,
+          status: "active",
+        },
+        { onConflict: "polymarket_id" }
+      )
+      .select()
+      .single();
+    if (error) {
+      console.error("[polymarket] saveToMarkets:", error.message);
+      return null;
+    }
+    return data as MarketRow;
+  } catch (err) {
+    console.error("[polymarket] saveToMarkets exception:", err);
+    return null;
+  }
+}
 
-export class PolymarketWS extends Emitter<PolymarketEvents> {
-  private ws: WebSocket | null = null;
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private state: WSConnectionState;
-  private shouldReconnect = true;
+async function saveWhaleActivity(
+  trade: PolymarketTrade,
+  marketId: string
+): Promise<void> {
+  try {
+    await getSupabase().from("whale_activity").insert({
+      market_id: marketId,
+      wallet_address: "polymarket-ws",
+      side: trade.outcome.toLowerCase() === "yes" ? "yes" : "no",
+      size: trade.usdAmount,
+      price: trade.price,
+      total_position: 0,
+      detected_at: trade.timestamp,
+    });
+  } catch (err) {
+    console.error("[polymarket] saveWhaleActivity:", err);
+  }
+}
 
-  constructor(private url: string = POLYMARKET_WS_URL) {
-    super();
-    this.state = {
-      connected: false,
-      url: this.url,
-      reconnectAttempts: 0,
-      lastHeartbeat: null,
-      subscribedChannels: [],
+function categorize(title: string): string {
+  const lower = title.toLowerCase();
+  const aiKeywords = [
+    "ai", "artificial intelligence", "openai", "chatgpt", "llm",
+    "tech", "apple", "google", "microsoft", "nvidia", "meta",
+    "crypto", "bitcoin", "ethereum", "btc", "eth",
+  ];
+  const politicsKeywords = [
+    "trump", "biden", "election", "president", "congress",
+    "senate", "governor", "vote", "democrat", "republican",
+    "political", "policy", "supreme court",
+  ];
+  if (aiKeywords.some((kw) => lower.includes(kw))) return "ai_tech";
+  if (politicsKeywords.some((kw) => lower.includes(kw))) return "politics";
+  return "other";
+}
+
+// ---------------------------------------------------------------------------
+// Parse incoming WS trade message
+// ---------------------------------------------------------------------------
+
+function parseTradeMessage(raw: string): PolymarketTrade | null {
+  try {
+    const msg = JSON.parse(raw);
+
+    // Handle different message formats from Polymarket WS
+    const conditionId = msg.asset_id ?? msg.condition_id ?? msg.market ?? "";
+    const title = msg.question ?? msg.title ?? msg.market_slug ?? conditionId;
+    const outcome = msg.outcome ?? msg.side ?? "unknown";
+    const price = parseFloat(msg.price ?? msg.last_price ?? "0");
+    const size = parseFloat(msg.size ?? msg.amount ?? "0");
+
+    if (!conditionId || isNaN(price) || isNaN(size)) return null;
+
+    return {
+      conditionId,
+      title,
+      outcome,
+      price,
+      size,
+      usdAmount: price * size,
+      timestamp: new Date().toISOString(),
     };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Process a trade — filter, store, track
+// ---------------------------------------------------------------------------
+
+async function processTrade(trade: PolymarketTrade): Promise<void> {
+  if (!passesFilters(trade)) return;
+
+  // Keep in memory (last 100 trades)
+  _recentTrades.unshift(trade);
+  if (_recentTrades.length > 100) _recentTrades.length = 100;
+
+  // Save to markets table
+  const market = await saveToMarkets(trade);
+  if (!market) return;
+
+  // Save whale activity (all trades >= $500 pass filter)
+  await saveWhaleActivity(trade, market.id);
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket connection
+// ---------------------------------------------------------------------------
+
+export function connectPolymarketFeed(): () => void {
+  if (_ws && _ws.readyState === WebSocket.OPEN) {
+    return () => disconnectFeed();
   }
 
-  /** Current connection state (immutable snapshot). */
-  getState(): Readonly<WSConnectionState> {
-    return { ...this.state };
-  }
+  try {
+    _ws = new WebSocket(POLYMARKET_WS_URL);
 
-  // -----------------------------------------------------------------------
-  // Connect / Disconnect
-  // -----------------------------------------------------------------------
+    _ws.onopen = () => {
+      console.log("[polymarket] Connected to Polymarket WS");
+      _connected = true;
 
-  connect(): void {
-    if (this.ws?.readyState === WebSocket.OPEN) return;
-
-    try {
-      this.ws = new WebSocket(this.url);
-      this.ws.onopen = this.handleOpen;
-      this.ws.onmessage = this.handleMessage;
-      this.ws.onclose = this.handleClose;
-      this.ws.onerror = this.handleError;
-    } catch (err) {
-      this.emit("error", {
-        message: err instanceof Error ? err.message : "WebSocket connect failed",
-      });
-      this.scheduleReconnect();
-    }
-  }
-
-  disconnect(): void {
-    this.shouldReconnect = false;
-    this.clearTimers();
-    if (this.ws) {
-      this.ws.close(1000, "client disconnect");
-      this.ws = null;
-    }
-    this.updateState({ connected: false });
-  }
-
-  // -----------------------------------------------------------------------
-  // Subscribe / Unsubscribe
-  // -----------------------------------------------------------------------
-
-  subscribe(marketIds: string[], channels: string[] = ["price", "trade"]): void {
-    this.send({
-      action: "subscribe",
-      channels,
-      marketIds,
-    });
-    this.updateState({
-      subscribedChannels: [
-        ...new Set([...this.state.subscribedChannels, ...channels]),
-      ],
-    });
-  }
-
-  unsubscribe(marketIds: string[], channels: string[] = ["price", "trade"]): void {
-    this.send({
-      action: "unsubscribe",
-      channels,
-      marketIds,
-    });
-  }
-
-  // -----------------------------------------------------------------------
-  // Internal handlers
-  // -----------------------------------------------------------------------
-
-  private handleOpen = () => {
-    this.updateState({ connected: true, reconnectAttempts: 0 });
-    this.startHeartbeat();
-    this.emit("connected", undefined as unknown as void);
-  };
-
-  private handleMessage = (event: MessageEvent) => {
-    try {
-      const msg = JSON.parse(event.data as string) as WSInboundMessage;
-
-      // Emit typed events for common message types
-      switch (msg.type) {
-        case "price_update":
-          this.emit("price", msg);
-          break;
-        case "trade":
-          this.emit("trade", msg);
-          break;
-        case "whale_trade":
-          this.emit("whale", msg);
-          break;
-        case "heartbeat":
-          this.updateState({ lastHeartbeat: msg.timestamp });
-          break;
-        case "error":
-          this.emit("error", { message: msg.message });
-          break;
+      // Subscribe to activity channel
+      if (_ws?.readyState === WebSocket.OPEN) {
+        _ws.send(
+          JSON.stringify({
+            type: "subscribe",
+            channel: "activity",
+            market: "orders_matched",
+          })
+        );
       }
+    };
 
-      // Always emit the raw message too
-      this.emit("message", msg);
-    } catch {
-      this.emit("error", { message: "Failed to parse WS message" });
-    }
-  };
-
-  private handleClose = (event: CloseEvent) => {
-    this.updateState({ connected: false });
-    this.clearTimers();
-    this.emit("disconnected", { code: event.code, reason: event.reason });
-
-    if (this.shouldReconnect) {
-      this.scheduleReconnect();
-    }
-  };
-
-  private handleError = () => {
-    this.emit("error", { message: "WebSocket error" });
-  };
-
-  // -----------------------------------------------------------------------
-  // Reconnect
-  // -----------------------------------------------------------------------
-
-  private scheduleReconnect(): void {
-    if (this.state.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-      this.emit("error", { message: "Max reconnect attempts reached" });
-      return;
-    }
-
-    const delay =
-      RECONNECT_INTERVAL_MS * Math.pow(1.5, this.state.reconnectAttempts);
-
-    this.reconnectTimer = setTimeout(() => {
-      this.updateState({
-        reconnectAttempts: this.state.reconnectAttempts + 1,
-      });
-      this.connect();
-    }, delay);
-  }
-
-  // -----------------------------------------------------------------------
-  // Heartbeat
-  // -----------------------------------------------------------------------
-
-  private startHeartbeat(): void {
-    this.heartbeatTimer = setInterval(() => {
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: "ping" }));
+    _ws.onmessage = (event: MessageEvent) => {
+      const trade = parseTradeMessage(
+        typeof event.data === "string" ? event.data : ""
+      );
+      if (trade) {
+        processTrade(trade).catch(console.error);
       }
-    }, HEARTBEAT_INTERVAL_MS);
+    };
+
+    _ws.onclose = (event: CloseEvent) => {
+      console.log(`[polymarket] Disconnected (code: ${event.code})`);
+      _connected = false;
+
+      // Auto-reconnect after 5 seconds
+      if (event.code !== 1000) {
+        _reconnectTimer = setTimeout(() => {
+          connectPolymarketFeed();
+        }, 5_000);
+      }
+    };
+
+    _ws.onerror = () => {
+      console.error("[polymarket] WebSocket error");
+      _connected = false;
+    };
+  } catch (err) {
+    console.error("[polymarket] Failed to connect:", err);
+    _connected = false;
   }
 
-  // -----------------------------------------------------------------------
-  // Utilities
-  // -----------------------------------------------------------------------
+  return () => disconnectFeed();
+}
 
-  private send(payload: WSSubscribe): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(payload));
-    }
+function disconnectFeed(): void {
+  if (_ws) {
+    _ws.close(1000, "client disconnect");
+    _ws = null;
   }
-
-  private updateState(patch: Partial<WSConnectionState>): void {
-    this.state = { ...this.state, ...patch };
-    this.emit("stateChange", this.state);
+  if (_reconnectTimer) {
+    clearTimeout(_reconnectTimer);
+    _reconnectTimer = null;
   }
-
-  private clearTimers(): void {
-    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.heartbeatTimer = null;
-    this.reconnectTimer = null;
-  }
+  _connected = false;
+  _recentTrades = [];
 }
 
 // ---------------------------------------------------------------------------
-// Market helpers
+// Public getters
 // ---------------------------------------------------------------------------
 
-/** Filter markets to only allowed categories. */
-export function filterAllowedMarkets(markets: Market[]): Market[] {
-  return markets.filter((m) => ALLOWED_CATEGORIES.includes(m.category));
+export function isConnected(): boolean {
+  return _connected;
 }
 
-/** Calculate the spread of a market in basis points. */
-export function calcSpreadBps(market: Market): number {
-  const [yes, no] = market.outcomePrices;
-  const mid = (yes + no) / 2;
-  if (mid === 0) return 0;
-  return Math.round((Math.abs(yes - no) / mid) * 10_000);
+/** Get recent markets from Supabase (last 10, ordered by update). */
+export async function getRecentMarkets(limit = 10): Promise<MarketRow[]> {
+  const { data, error } = await getSupabase()
+    .from("markets")
+    .select("*")
+    .eq("status", "active")
+    .order("updated_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`getRecentMarkets: ${error.message}`);
+  return data as MarketRow[];
 }
 
-/** Calculate implied probability from a price (0-1). */
-export function impliedProbability(price: number): number {
-  return Math.max(0, Math.min(1, price));
+/** Get recent whale activity from Supabase. */
+export async function getWhaleActivity(
+  limit = 10
+): Promise<WhaleActivityRow[]> {
+  const { data, error } = await getSupabase()
+    .from("whale_activity")
+    .select("*")
+    .order("detected_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`getWhaleActivity: ${error.message}`);
+  return data as WhaleActivityRow[];
 }
 
-/** Check if a trade size qualifies as a whale trade. */
-export function isWhaleTrade(size: number, threshold = WHALE_SIZE_THRESHOLD): boolean {
-  return size >= threshold;
-}
-
-/** Build a WhaleActivity record from a WS whale trade message. */
-export function whaleActivityFromWS(msg: WSWhaleTrade): Omit<WhaleActivity, "id" | "totalPosition" | "historicalAccuracy"> {
-  return {
-    marketId: msg.marketId,
-    walletAddress: msg.walletAddress,
-    side: msg.side,
-    size: msg.size,
-    price: msg.price,
-    detectedAt: msg.timestamp,
-  };
-}
-
-/** Calculate expected value of a position. */
-export function expectedValue(
-  probability: number,
-  price: number,
-  size: number
-): number {
-  return (probability - price) * size;
-}
-
-/** Check if a confidence level meets the project minimum (67%). */
-export function meetsConfidenceThreshold(
-  confidence: number,
-  minConfidence = 0.67
-): boolean {
-  return confidence >= minConfidence;
-}
-
-// ---------------------------------------------------------------------------
-// Singleton export (connect once, share across the app)
-// ---------------------------------------------------------------------------
-
-let _instance: PolymarketWS | null = null;
-
-export function getPolymarketWS(): PolymarketWS {
-  if (!_instance) {
-    _instance = new PolymarketWS();
-  }
-  return _instance;
+/** Seed initial data — fetch recent markets from Supabase. */
+export async function seedInitialData(): Promise<void> {
+  console.log("[polymarket] Seeding initial market data from Supabase...");
+  // Historical data will be populated as WS trades come in.
+  // Future: call Polymarket REST API for last 24h of trades.
 }

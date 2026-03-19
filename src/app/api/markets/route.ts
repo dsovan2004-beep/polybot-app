@@ -1,31 +1,22 @@
 // ============================================================================
-// GET /api/markets — Dashboard data (markets, signals, trades, performance)
-// POST /api/markets — Record a new trade
-// Matches Sprint 2 Supabase schema (snake_case columns)
+// GET /api/markets — Live market data + whale activity from Supabase
+// Polymarket WS feed runs server-side; this endpoint reads the results
 // ============================================================================
 
 export const runtime = "edge";
 
-import { NextRequest, NextResponse } from "next/server";
-import type {
-  MarketRow,
-  SignalRow,
-  TradeRow,
-  PerformanceRow,
-  RebateRow,
-} from "@/lib/supabase";
+import { NextResponse } from "next/server";
 import {
-  getMarkets,
-  getRecentSignals,
-  getRecentTrades,
-  getOpenTrades,
-  getLatestPerformance,
-  getRecentRebates,
-  insertTrade,
-} from "@/lib/supabase";
+  connectPolymarketFeed,
+  getRecentMarkets,
+  getWhaleActivity,
+  isConnected,
+} from "@/lib/polymarket";
+import type { MarketRow } from "@/lib/supabase";
+import type { WhaleActivityRow } from "@/lib/polymarket";
 
 // ---------------------------------------------------------------------------
-// API response envelope
+// API response types
 // ---------------------------------------------------------------------------
 
 interface ApiResponse<T = unknown> {
@@ -35,102 +26,54 @@ interface ApiResponse<T = unknown> {
   timestamp: string;
 }
 
-// ---------------------------------------------------------------------------
-// Dashboard shape
-// ---------------------------------------------------------------------------
-
-interface DashboardData {
+interface MarketsResponse {
   markets: MarketRow[];
-  signals: SignalRow[];
-  openTrades: TradeRow[];
-  recentTrades: TradeRow[];
-  performance: PerformanceRow | null;
-  rebates: RebateRow[];
-  updatedAt: string;
+  whales: WhaleActivityRow[];
+  connected: boolean;
 }
 
 // ---------------------------------------------------------------------------
-// GET — fetch dashboard data
+// Ensure WS feed is running (idempotent — won't double-connect)
 // ---------------------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const category = searchParams.get("category") ?? undefined;
-    const limit = Math.min(Number(searchParams.get("limit") ?? 50), 200);
+let _feedStarted = false;
 
-    const [markets, signals, openTrades, recentTrades, performance, rebates] =
-      await Promise.all([
-        getMarkets(category, limit),
-        getRecentSignals(30),
-        getOpenTrades(),
-        getRecentTrades(limit),
-        getLatestPerformance(),
-        getRecentRebates(30),
-      ]);
-
-    const dashboard: DashboardData = {
-      markets,
-      signals,
-      openTrades,
-      recentTrades,
-      performance,
-      rebates,
-      updatedAt: new Date().toISOString(),
-    };
-
-    return NextResponse.json<ApiResponse<DashboardData>>({
-      ok: true,
-      data: dashboard,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json<ApiResponse>(
-      { ok: false, error: message, timestamp: new Date().toISOString() },
-      { status: 500 }
-    );
+function ensureFeedRunning(): void {
+  if (!_feedStarted) {
+    try {
+      connectPolymarketFeed();
+      _feedStarted = true;
+    } catch {
+      // Edge runtime may not support persistent WS — graceful fallback
+      console.warn("[markets] Could not start Polymarket WS in edge runtime");
+    }
   }
 }
 
 // ---------------------------------------------------------------------------
-// POST — record a new trade
+// GET handler
 // ---------------------------------------------------------------------------
 
-export async function POST(req: NextRequest) {
+export async function GET() {
   try {
-    const body = await req.json();
+    // Try to start the WS feed (may not work in edge, that's fine)
+    ensureFeedRunning();
 
-    // Validate required fields
-    if (!body.direction) {
-      return NextResponse.json<ApiResponse>(
-        {
-          ok: false,
-          error: "Missing required field: direction",
-          timestamp: new Date().toISOString(),
-        },
-        { status: 400 }
-      );
-    }
+    // Fetch from Supabase regardless of WS state
+    const [markets, whales] = await Promise.all([
+      getRecentMarkets(10),
+      getWhaleActivity(10),
+    ]);
 
-    // Validate allowed categories if market_id is provided with category
-    const allowedCategories = ["ai_tech", "politics"];
-    if (body.category && !allowedCategories.includes(body.category)) {
-      return NextResponse.json<ApiResponse>(
-        {
-          ok: false,
-          error: `Trade rejected: category "${body.category}" not allowed`,
-          timestamp: new Date().toISOString(),
-        },
-        { status: 400 }
-      );
-    }
+    const response: MarketsResponse = {
+      markets,
+      whales,
+      connected: isConnected(),
+    };
 
-    const trade = await insertTrade(body);
-
-    return NextResponse.json<ApiResponse<TradeRow>>({
+    return NextResponse.json<ApiResponse<MarketsResponse>>({
       ok: true,
-      data: trade,
+      data: response,
       timestamp: new Date().toISOString(),
     });
   } catch (err) {

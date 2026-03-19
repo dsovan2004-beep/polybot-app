@@ -1,14 +1,15 @@
 // ============================================================================
-// POST /api/swarm — Claude-only AI Swarm (3 perspectives)
-// 3 parallel Claude calls with different analyst personas
-// Requires 2/3 agreement + 67% confidence minimum
-// Outputs: YES / NO / NO_TRADE
-// Accepts optional userDomain to inject domain expertise into prompts
+// POST /api/swarm — Claude AI Signal Generator (Sprint 4)
+// Analyzes a Polymarket market using Claude Sonnet
+// Saves signal to Supabase signals table
+// Rules: 67% confidence min, 10% price gap min, otherwise NO_TRADE
 // ============================================================================
 
 export const runtime = "edge";
 
 import { NextRequest, NextResponse } from "next/server";
+import { getSupabase } from "@/lib/supabase";
+import type { SignalRow } from "@/lib/supabase";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -16,10 +17,12 @@ import { NextRequest, NextResponse } from "next/server";
 
 const CLAUDE_MODEL = "claude-sonnet-4-20250514";
 const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
-const MIN_CONFIDENCE = 0.67;
-const MIN_AGREEMENT = 2; // 2 out of 3 must agree
+const MIN_CONFIDENCE = 67;
+const MIN_PRICE_GAP = 0.10;
 
-type SwarmSide = "YES" | "NO" | "NO_TRADE";
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 interface ApiResponse<T = unknown> {
   ok: boolean;
@@ -28,131 +31,65 @@ interface ApiResponse<T = unknown> {
   timestamp: string;
 }
 
-interface SwarmVoteResult {
-  role: string;
-  side: SwarmSide;
-  confidence: number;
-  reasoning: string;
-  keyFactors: string[];
-  latencyMs: number;
-}
-
-interface SwarmResponse {
-  votes: SwarmVoteResult[];
-  consensus: SwarmSide;
-  consensusConfidence: number;
-  agreement: number;
-  shouldTrade: boolean;
-  dissent: string[];
-  marketId: string;
-  userDomain: string | null;
-  timestamp: string;
-}
-
-// ---------------------------------------------------------------------------
-// Market input shape
-// ---------------------------------------------------------------------------
-
 interface MarketInput {
   id: string;
+  polymarket_id: string;
   title: string;
   category: string;
-  currentPrice: number;
-  volume24h?: number;
+  current_price: number;
+  volume_24h?: number;
   liquidity?: number;
-  closesAt?: string;
+  closes_at?: string;
+}
+
+interface ClaudeSignal {
+  vote: "YES" | "NO" | "NO_TRADE";
+  probability: number;
+  confidence: number;
+  reason: string;
 }
 
 // ---------------------------------------------------------------------------
-// System prompts — 3 analyst perspectives
-// userDomain is injected dynamically when provided
+// System prompt — domain expertise
 // ---------------------------------------------------------------------------
 
-function buildAnalystPrompts(userDomain?: string | null) {
-  const domainLine = userDomain
-    ? `\nYou have deep domain expertise in: ${userDomain}. Use this knowledge to inform your analysis — look for patterns and signals that a generalist would miss.`
-    : "";
+const SYSTEM_PROMPT = `You are analyzing a Polymarket prediction market as a specialist with 20+ years enterprise IT and security experience, 2 completed M&A integrations, deep expertise in Okta, CrowdStrike, Zscaler, 4x SOC 2 Type II audit lead, and active AI red team testing experience.
 
-  return [
-    {
-      role: "Probability Analyst",
-      system: `You are a Probability Analyst for a prediction market trading bot.
-Your job is to estimate the TRUE probability of an event occurring based on:
-- Historical base rates for similar events
-- Statistical patterns and data
-- Reference class forecasting
-- Calibration against known outcomes
-
-You are data-driven and skeptical of narratives. You focus on numbers, not stories.
-Do NOT be swayed by recent news hype — stick to what the data says.${domainLine}`,
-    },
-    {
-      role: "News Analyst",
-      system: `You are a News & Sentiment Analyst for a prediction market trading bot.
-Your job is to assess how recent news and public sentiment affect the probability of an event:
-- Breaking news and developments in the last 24-72 hours
-- Social media sentiment and narrative shifts
-- Expert opinions and insider signals
-- Information that the market may not have priced in yet
-
-You look for information edges — news the market is slow to react to.
-Focus on what has CHANGED recently, not historical base rates.${domainLine}`,
-    },
-    {
-      role: "Risk Analyst",
-      system: `You are a Risk & Contrarian Analyst for a prediction market trading bot.
-Your job is to identify reasons the consensus might be WRONG:
-- Downside risks and tail events
-- Hidden assumptions in the market price
-- Scenarios where the obvious answer fails
-- Liquidity traps and market manipulation signals
-- Reasons to say NO_TRADE even if others are confident
-
-You are the devil's advocate. If something seems too obvious, explain why it might not be.
-You should have a higher bar for confidence than the other analysts.${domainLine}`,
-    },
-  ];
-}
-
-// ---------------------------------------------------------------------------
-// Build the user prompt (same for all 3 analysts)
-// ---------------------------------------------------------------------------
-
-function buildUserPrompt(market: MarketInput): string {
-  const impliedProb = (market.currentPrice * 100).toFixed(1);
-  return `Analyze this prediction market and give your verdict.
-
-Market: ${market.title}
-Category: ${market.category}
-Current YES price: ${market.currentPrice} (implied probability: ${impliedProb}%)
-${market.volume24h ? `24h Volume: $${market.volume24h.toLocaleString()}` : ""}
-${market.liquidity ? `Liquidity: $${market.liquidity.toLocaleString()}` : ""}
-${market.closesAt ? `Closes: ${market.closesAt}` : ""}
-
-You must respond with ONLY valid JSON (no markdown, no extra text):
+Analyze this market. Output ONLY valid JSON:
 {
-  "side": "YES" or "NO" or "NO_TRADE",
-  "confidence": 0.0 to 1.0,
-  "reasoning": "your analysis in 2-3 sentences",
-  "keyFactors": ["factor1", "factor2", "factor3"]
+  "vote": "YES" or "NO" or "NO_TRADE",
+  "probability": 0.00 to 1.00,
+  "confidence": 0 to 100,
+  "reason": "one sentence max"
 }
 
 Rules:
-- "YES" means you think the event WILL happen (price should be higher)
-- "NO" means you think the event will NOT happen (price should be lower)
-- "NO_TRADE" means you don't have enough edge to recommend a trade
-- confidence must reflect how sure you are (0.67+ needed to trade)
-- If the market price already reflects reality, say NO_TRADE`;
+- Only vote YES or NO if your confidence is >= 67
+- Only vote YES or NO if the price gap is >= 10% (abs(your probability - market price) > 0.10)
+- Otherwise vote NO_TRADE
+- Be calibrated — don't be overconfident
+- Consider base rates, recent news, and market efficiency`;
+
+// ---------------------------------------------------------------------------
+// Build user prompt
+// ---------------------------------------------------------------------------
+
+function buildUserPrompt(market: MarketInput): string {
+  return `Market: ${market.title}
+Category: ${market.category}
+Current YES price: ${market.current_price} (implied probability: ${(market.current_price * 100).toFixed(1)}%)
+${market.volume_24h ? `24h Volume: $${market.volume_24h.toLocaleString()}` : ""}
+${market.liquidity ? `Liquidity: $${market.liquidity.toLocaleString()}` : ""}
+${market.closes_at ? `Closes: ${market.closes_at}` : ""}
+
+What is your analysis?`;
 }
 
 // ---------------------------------------------------------------------------
 // Call Claude API
 // ---------------------------------------------------------------------------
 
-async function callClaude(
-  systemPrompt: string,
-  userPrompt: string
-): Promise<{ side: SwarmSide; confidence: number; reasoning: string; keyFactors: string[] }> {
+async function callClaude(userPrompt: string): Promise<ClaudeSignal> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY");
 
@@ -165,10 +102,10 @@ async function callClaude(
     },
     body: JSON.stringify({
       model: CLAUDE_MODEL,
-      max_tokens: 512,
-      system: systemPrompt,
+      max_tokens: 256,
+      system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: userPrompt }],
-      temperature: 0.4,
+      temperature: 0.3,
     }),
   });
 
@@ -180,77 +117,58 @@ async function callClaude(
   const data = await res.json();
   const content = data.content?.[0]?.text ?? "";
 
+  // Parse JSON, handle markdown wrapping
   const jsonMatch = content.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("No JSON found in Claude response");
+  if (!jsonMatch) throw new Error("No JSON in Claude response");
 
   const parsed = JSON.parse(jsonMatch[0]);
 
-  const side = String(parsed.side).toUpperCase() as SwarmSide;
-  if (!["YES", "NO", "NO_TRADE"].includes(side)) {
-    throw new Error(`Invalid side: ${parsed.side}`);
+  const vote = String(parsed.vote).toUpperCase();
+  if (!["YES", "NO", "NO_TRADE"].includes(vote)) {
+    throw new Error(`Invalid vote: ${parsed.vote}`);
   }
 
   return {
-    side,
-    confidence: Math.max(0, Math.min(1, Number(parsed.confidence))),
-    reasoning: String(parsed.reasoning ?? ""),
-    keyFactors: Array.isArray(parsed.keyFactors)
-      ? parsed.keyFactors.map(String)
-      : [],
+    vote: vote as "YES" | "NO" | "NO_TRADE",
+    probability: Math.max(0, Math.min(1, Number(parsed.probability))),
+    confidence: Math.max(0, Math.min(100, Math.round(Number(parsed.confidence)))),
+    reason: String(parsed.reason ?? ""),
   };
 }
 
 // ---------------------------------------------------------------------------
-// Consensus engine — 2/3 agreement + 67% confidence
+// Save signal to Supabase
 // ---------------------------------------------------------------------------
 
-function computeConsensus(votes: SwarmVoteResult[]): {
-  consensus: SwarmSide;
-  consensusConfidence: number;
-  agreement: number;
-  shouldTrade: boolean;
-  dissent: string[];
-} {
-  const counts: Record<SwarmSide, SwarmVoteResult[]> = {
-    YES: [],
-    NO: [],
-    NO_TRADE: [],
+async function saveSignal(
+  market: MarketInput,
+  signal: ClaudeSignal
+): Promise<SignalRow> {
+  const priceGap = Math.abs(signal.probability - market.current_price);
+
+  const row: Omit<SignalRow, "id" | "created_at"> = {
+    market_id: market.id,
+    strategy: "ai_swarm",
+    claude_vote: signal.vote,
+    gpt4o_vote: null,
+    gemini_vote: null,
+    consensus: signal.vote,
+    confidence: signal.confidence,
+    ai_probability: signal.probability,
+    market_price: market.current_price,
+    price_gap: priceGap,
+    reasoning: signal.reason,
+    acted_on: false,
   };
-  for (const v of votes) {
-    counts[v.side].push(v);
-  }
 
-  let majorSide: SwarmSide = "NO_TRADE";
-  let majorCount = 0;
-  for (const side of ["YES", "NO", "NO_TRADE"] as SwarmSide[]) {
-    if (counts[side].length > majorCount) {
-      majorCount = counts[side].length;
-      majorSide = side;
-    }
-  }
+  const { data, error } = await getSupabase()
+    .from("signals")
+    .insert(row)
+    .select()
+    .single();
 
-  const majorVotes = counts[majorSide];
-  const consensusConfidence =
-    majorVotes.length > 0
-      ? majorVotes.reduce((s, v) => s + v.confidence, 0) / majorVotes.length
-      : 0;
-
-  const dissent = votes
-    .filter((v) => v.side !== majorSide)
-    .map((v) => `[${v.role}] ${v.side} (${(v.confidence * 100).toFixed(0)}%) — ${v.reasoning}`);
-
-  const shouldTrade =
-    majorCount >= MIN_AGREEMENT &&
-    consensusConfidence >= MIN_CONFIDENCE &&
-    majorSide !== "NO_TRADE";
-
-  return {
-    consensus: majorSide,
-    consensusConfidence,
-    agreement: majorCount,
-    shouldTrade,
-    dissent,
-  };
+  if (error) throw new Error(`saveSignal: ${error.message}`);
+  return data as SignalRow;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,7 +179,6 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const market: MarketInput = body.market;
-    const userDomain: string | null = body.userDomain ?? null;
 
     if (!market?.id || !market?.title) {
       return NextResponse.json<ApiResponse>(
@@ -274,66 +191,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Call Claude
     const userPrompt = buildUserPrompt(market);
-    const analystPrompts = buildAnalystPrompts(userDomain);
+    const signal = await callClaude(userPrompt);
 
-    // Call Claude 3 times in parallel — one per analyst persona
-    const votePromises = analystPrompts.map(async ({ role, system }) => {
-      const start = Date.now();
-      try {
-        const result = await callClaude(system, userPrompt);
-        return {
-          role,
-          side: result.side,
-          confidence: result.confidence,
-          reasoning: result.reasoning,
-          keyFactors: result.keyFactors,
-          latencyMs: Date.now() - start,
-        } as SwarmVoteResult;
-      } catch (err) {
-        console.error(`Swarm vote failed for ${role}:`, err);
-        return null;
-      }
-    });
+    // Apply rules: 67% confidence and 10% price gap
+    const priceGap = Math.abs(signal.probability - market.current_price);
 
-    const results = await Promise.allSettled(votePromises);
-    const votes = results
-      .filter(
-        (r): r is PromiseFulfilledResult<SwarmVoteResult | null> =>
-          r.status === "fulfilled"
-      )
-      .map((r) => r.value)
-      .filter((v): v is SwarmVoteResult => v !== null);
-
-    if (votes.length === 0) {
-      return NextResponse.json<ApiResponse>(
-        {
-          ok: false,
-          error: "All 3 Claude analyst calls failed — no votes collected",
-          timestamp: new Date().toISOString(),
-        },
-        { status: 502 }
-      );
+    if (signal.confidence < MIN_CONFIDENCE || priceGap < MIN_PRICE_GAP) {
+      signal.vote = "NO_TRADE";
     }
 
-    const { consensus, consensusConfidence, agreement, shouldTrade, dissent } =
-      computeConsensus(votes);
+    // Save to Supabase
+    const saved = await saveSignal(market, signal);
 
-    const response: SwarmResponse = {
-      votes,
-      consensus,
-      consensusConfidence,
-      agreement,
-      shouldTrade,
-      dissent,
-      marketId: market.id,
-      userDomain,
-      timestamp: new Date().toISOString(),
-    };
-
-    return NextResponse.json<ApiResponse<SwarmResponse>>({
+    return NextResponse.json<ApiResponse<SignalRow>>({
       ok: true,
-      data: response,
+      data: saved,
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
