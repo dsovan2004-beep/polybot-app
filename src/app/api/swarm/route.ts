@@ -93,25 +93,49 @@ What is your analysis?`;
 // Call Claude API
 // ---------------------------------------------------------------------------
 
+const CLAUDE_TIMEOUT_MS = 8_000;
+
 async function callClaude(userPrompt: string): Promise<ClaudeSignal> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY");
 
-  const res = await fetch(CLAUDE_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 256,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userPrompt }],
-      temperature: 0.3,
-    }),
-  });
+  // 8-second timeout to avoid hanging on Cloudflare edge
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CLAUDE_TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch(CLAUDE_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: 256,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: "user", content: userPrompt }],
+        temperature: 0.3,
+      }),
+      signal: controller.signal,
+    });
+  } catch (err: unknown) {
+    clearTimeout(timer);
+    // Timeout or network error → graceful NO_TRADE
+    if (err instanceof DOMException && err.name === "AbortError") {
+      return {
+        vote: "NO_TRADE",
+        probability: 0.5,
+        confidence: 0,
+        reason: "Claude call timed out (>8s)",
+        strategy: "unknown",
+      };
+    }
+    throw err;
+  }
+  clearTimeout(timer);
 
   if (!res.ok) {
     const text = await res.text();

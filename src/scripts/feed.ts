@@ -38,6 +38,11 @@ const SPORTS_KEYWORDS = [
   "mlb", "nhl", "tennis", "boxing", "mma", "premier league",
   "champions league", "world cup", "super bowl", "playoff",
   "grand slam", "olympics",
+  // Sprint 5 — strengthened sports filter
+  "fc", "vs.", "o/u", "open", "uefa", "premier",
+  "laliga", "bundesliga", "serie a", "ligue 1", "mls",
+  "vallecano", "porto", "stuttgart", "samsunspor",
+  "forest", "madrid", "tagger", "seidel",
 ];
 
 // ---------------------------------------------------------------------------

@@ -405,7 +405,9 @@ function SignalCard({ signal }: { signal: SignalRow }) {
 // Whale Row
 // ---------------------------------------------------------------------------
 
-function WhaleRowItem({ whale }: { whale: WhaleRow }) {
+function WhaleRowItem({ whale, markets }: { whale: WhaleRow; markets: MarketRow[] }) {
+  const matchedMarket = markets.find((m) => m.id === whale.market_id);
+  const marketLabel = matchedMarket?.title?.slice(0, 40) ?? whale.market_id.slice(0, 8) + "...";
   const dirColor = whale.direction === "yes" || whale.direction === "YES" ? "#4ade80" : "#f87171";
   const dirBg = whale.direction === "yes" || whale.direction === "YES"
     ? "rgba(74,222,128,0.1)"
@@ -421,8 +423,8 @@ function WhaleRowItem({ whale }: { whale: WhaleRow }) {
         borderBottom: `0.5px solid ${css.border}`,
       }}
     >
-      <p style={{ fontSize: 13, color: css.textPrimary, flex: 1, minWidth: 0 }}>
-        {whale.market_id.slice(0, 8)}...
+      <p style={{ fontSize: 13, color: css.textPrimary, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {marketLabel}
       </p>
       <span
         style={{
@@ -692,7 +694,7 @@ export default function BotDashboard() {
                   <span style={{ width: 70, textAlign: "right" }}>Time</span>
                 </div>
                 {whales.map((w) => (
-                  <WhaleRowItem key={w.id} whale={w} />
+                  <WhaleRowItem key={w.id} whale={w} markets={markets} />
                 ))}
               </div>
             )}
