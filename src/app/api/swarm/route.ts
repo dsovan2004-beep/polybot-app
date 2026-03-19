@@ -3,12 +3,12 @@
 // 3 parallel Claude calls with different analyst personas
 // Requires 2/3 agreement + 67% confidence minimum
 // Outputs: YES / NO / NO_TRADE
+// Accepts optional userDomain to inject domain expertise into prompts
 // ============================================================================
 
 export const runtime = "edge";
 
 import { NextRequest, NextResponse } from "next/server";
-import type { ApiResponse } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -20,6 +20,13 @@ const MIN_CONFIDENCE = 0.67;
 const MIN_AGREEMENT = 2; // 2 out of 3 must agree
 
 type SwarmSide = "YES" | "NO" | "NO_TRADE";
+
+interface ApiResponse<T = unknown> {
+  ok: boolean;
+  data?: T;
+  error?: string;
+  timestamp: string;
+}
 
 interface SwarmVoteResult {
   role: string;
@@ -34,15 +41,16 @@ interface SwarmResponse {
   votes: SwarmVoteResult[];
   consensus: SwarmSide;
   consensusConfidence: number;
-  agreement: number; // how many agreed
+  agreement: number;
   shouldTrade: boolean;
   dissent: string[];
   marketId: string;
+  userDomain: string | null;
   timestamp: string;
 }
 
 // ---------------------------------------------------------------------------
-// Market input shape (simplified for Sprint 2)
+// Market input shape
 // ---------------------------------------------------------------------------
 
 interface MarketInput {
@@ -57,12 +65,18 @@ interface MarketInput {
 
 // ---------------------------------------------------------------------------
 // System prompts — 3 analyst perspectives
+// userDomain is injected dynamically when provided
 // ---------------------------------------------------------------------------
 
-const ANALYST_PROMPTS: { role: string; system: string }[] = [
-  {
-    role: "Probability Analyst",
-    system: `You are a Probability Analyst for a prediction market trading bot.
+function buildAnalystPrompts(userDomain?: string | null) {
+  const domainLine = userDomain
+    ? `\nYou have deep domain expertise in: ${userDomain}. Use this knowledge to inform your analysis — look for patterns and signals that a generalist would miss.`
+    : "";
+
+  return [
+    {
+      role: "Probability Analyst",
+      system: `You are a Probability Analyst for a prediction market trading bot.
 Your job is to estimate the TRUE probability of an event occurring based on:
 - Historical base rates for similar events
 - Statistical patterns and data
@@ -70,11 +84,11 @@ Your job is to estimate the TRUE probability of an event occurring based on:
 - Calibration against known outcomes
 
 You are data-driven and skeptical of narratives. You focus on numbers, not stories.
-Do NOT be swayed by recent news hype — stick to what the data says.`,
-  },
-  {
-    role: "News Analyst",
-    system: `You are a News & Sentiment Analyst for a prediction market trading bot.
+Do NOT be swayed by recent news hype — stick to what the data says.${domainLine}`,
+    },
+    {
+      role: "News Analyst",
+      system: `You are a News & Sentiment Analyst for a prediction market trading bot.
 Your job is to assess how recent news and public sentiment affect the probability of an event:
 - Breaking news and developments in the last 24-72 hours
 - Social media sentiment and narrative shifts
@@ -82,11 +96,11 @@ Your job is to assess how recent news and public sentiment affect the probabilit
 - Information that the market may not have priced in yet
 
 You look for information edges — news the market is slow to react to.
-Focus on what has CHANGED recently, not historical base rates.`,
-  },
-  {
-    role: "Risk Analyst",
-    system: `You are a Risk & Contrarian Analyst for a prediction market trading bot.
+Focus on what has CHANGED recently, not historical base rates.${domainLine}`,
+    },
+    {
+      role: "Risk Analyst",
+      system: `You are a Risk & Contrarian Analyst for a prediction market trading bot.
 Your job is to identify reasons the consensus might be WRONG:
 - Downside risks and tail events
 - Hidden assumptions in the market price
@@ -95,9 +109,10 @@ Your job is to identify reasons the consensus might be WRONG:
 - Reasons to say NO_TRADE even if others are confident
 
 You are the devil's advocate. If something seems too obvious, explain why it might not be.
-You should have a higher bar for confidence than the other analysts.`,
-  },
-];
+You should have a higher bar for confidence than the other analysts.${domainLine}`,
+    },
+  ];
+}
 
 // ---------------------------------------------------------------------------
 // Build the user prompt (same for all 3 analysts)
@@ -165,13 +180,11 @@ async function callClaude(
   const data = await res.json();
   const content = data.content?.[0]?.text ?? "";
 
-  // Parse JSON from response, handling potential markdown wrapping
   const jsonMatch = content.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error("No JSON found in Claude response");
 
   const parsed = JSON.parse(jsonMatch[0]);
 
-  // Normalize side to uppercase
   const side = String(parsed.side).toUpperCase() as SwarmSide;
   if (!["YES", "NO", "NO_TRADE"].includes(side)) {
     throw new Error(`Invalid side: ${parsed.side}`);
@@ -198,7 +211,6 @@ function computeConsensus(votes: SwarmVoteResult[]): {
   shouldTrade: boolean;
   dissent: string[];
 } {
-  // Count votes per side
   const counts: Record<SwarmSide, SwarmVoteResult[]> = {
     YES: [],
     NO: [],
@@ -208,7 +220,6 @@ function computeConsensus(votes: SwarmVoteResult[]): {
     counts[v.side].push(v);
   }
 
-  // Find the majority side
   let majorSide: SwarmSide = "NO_TRADE";
   let majorCount = 0;
   for (const side of ["YES", "NO", "NO_TRADE"] as SwarmSide[]) {
@@ -218,19 +229,16 @@ function computeConsensus(votes: SwarmVoteResult[]): {
     }
   }
 
-  // Average confidence of the majority voters
   const majorVotes = counts[majorSide];
   const consensusConfidence =
     majorVotes.length > 0
       ? majorVotes.reduce((s, v) => s + v.confidence, 0) / majorVotes.length
       : 0;
 
-  // Dissenting opinions
   const dissent = votes
     .filter((v) => v.side !== majorSide)
     .map((v) => `[${v.role}] ${v.side} (${(v.confidence * 100).toFixed(0)}%) — ${v.reasoning}`);
 
-  // Must have 2/3 agreement AND 67% confidence AND not be NO_TRADE
   const shouldTrade =
     majorCount >= MIN_AGREEMENT &&
     consensusConfidence >= MIN_CONFIDENCE &&
@@ -253,6 +261,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const market: MarketInput = body.market;
+    const userDomain: string | null = body.userDomain ?? null;
 
     if (!market?.id || !market?.title) {
       return NextResponse.json<ApiResponse>(
@@ -265,23 +274,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Validate category
-    const allowedCategories = ["ai_tech", "politics"];
-    if (!allowedCategories.includes(market.category)) {
-      return NextResponse.json<ApiResponse>(
-        {
-          ok: false,
-          error: `Category "${market.category}" not allowed. Must be: ${allowedCategories.join(", ")}`,
-          timestamp: new Date().toISOString(),
-        },
-        { status: 400 }
-      );
-    }
-
     const userPrompt = buildUserPrompt(market);
+    const analystPrompts = buildAnalystPrompts(userDomain);
 
     // Call Claude 3 times in parallel — one per analyst persona
-    const votePromises = ANALYST_PROMPTS.map(async ({ role, system }) => {
+    const votePromises = analystPrompts.map(async ({ role, system }) => {
       const start = Date.now();
       try {
         const result = await callClaude(system, userPrompt);
@@ -319,7 +316,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Compute consensus
     const { consensus, consensusConfidence, agreement, shouldTrade, dissent } =
       computeConsensus(votes);
 
@@ -331,6 +327,7 @@ export async function POST(req: NextRequest) {
       shouldTrade,
       dissent,
       marketId: market.id,
+      userDomain,
       timestamp: new Date().toISOString(),
     };
 
