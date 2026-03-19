@@ -110,6 +110,7 @@ async function saveWhaleActivity(
   marketId: string
 ): Promise<void> {
   try {
+    // whale_activity table may not exist yet — fail silently
     await getSupabase().from("whale_activity").insert({
       market_id: marketId,
       wallet_address: "polymarket-ws",
@@ -119,8 +120,8 @@ async function saveWhaleActivity(
       total_position: 0,
       detected_at: trade.timestamp,
     });
-  } catch (err) {
-    console.error("[polymarket] saveWhaleActivity:", err);
+  } catch {
+    // Table doesn't exist yet — skip silently
   }
 }
 
@@ -285,17 +286,21 @@ export async function getRecentMarkets(limit = 10): Promise<MarketRow[]> {
   return data as MarketRow[];
 }
 
-/** Get recent whale activity from Supabase. */
+/** Get recent whale activity from Supabase. Returns empty if table doesn't exist. */
 export async function getWhaleActivity(
   limit = 10
 ): Promise<WhaleActivityRow[]> {
-  const { data, error } = await getSupabase()
-    .from("whale_activity")
-    .select("*")
-    .order("detected_at", { ascending: false })
-    .limit(limit);
-  if (error) throw new Error(`getWhaleActivity: ${error.message}`);
-  return data as WhaleActivityRow[];
+  try {
+    const { data, error } = await getSupabase()
+      .from("whale_activity")
+      .select("*")
+      .order("detected_at", { ascending: false })
+      .limit(limit);
+    if (error) return []; // Table may not exist yet
+    return data as WhaleActivityRow[];
+  } catch {
+    return [];
+  }
 }
 
 /** Seed initial data — fetch recent markets from Supabase. */
