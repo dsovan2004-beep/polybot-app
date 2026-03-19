@@ -645,7 +645,7 @@ export default function BotDashboard() {
                     {markets.slice(0, 5).map((m) => (
                       <div key={m.id} style={{ padding: "6px 0", borderBottom: `0.5px solid ${css.border}`, fontSize: 12 }}>
                         <span style={{ color: css.textPrimary }}>{m.title?.slice(0, 50)}</span>
-                        <span style={{ color: css.indigo, marginLeft: 8, fontFamily: "monospace" }}>
+                        <span style={{ color: "#4ade80", marginLeft: 8, fontFamily: "monospace" }}>
                           {fmtPct(m.current_price)}
                         </span>
                       </div>
