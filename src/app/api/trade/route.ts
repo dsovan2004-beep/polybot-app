@@ -11,7 +11,7 @@
 // Edge runtime compatible
 // ============================================================================
 
-import { getSupabase } from "@/lib/supabase";
+import { getServiceSupabase } from "@/lib/supabase";
 import { getBalance, placeLimitOrder } from "@/lib/kalshi";
 import { sendTradeAlert, sendKillSwitchAlert } from "@/lib/telegram";
 
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
 
     // ---- 1. Kill switch check ----
     const today = new Date().toISOString().slice(0, 10);
-    const { data: perfData } = await getSupabase()
+    const { data: perfData } = await getServiceSupabase()
       .from("performance")
       .select("kill_switch")
       .eq("date", today)
@@ -135,7 +135,7 @@ export async function POST(request: Request) {
         : `LIVE: ${orderResult.orderId}`,
     };
 
-    const { error: tradeErr } = await getSupabase()
+    const { error: tradeErr } = await getServiceSupabase()
       .from("trades")
       .insert(tradePayload);
 

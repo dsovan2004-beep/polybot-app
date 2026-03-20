@@ -5,7 +5,7 @@
 // Edge runtime compatible
 // ============================================================================
 
-import { getSupabase } from "@/lib/supabase";
+import { getSupabase, getServiceSupabase } from "@/lib/supabase";
 
 export const runtime = "edge";
 
@@ -48,8 +48,8 @@ export async function POST() {
   try {
     const today = new Date().toISOString().slice(0, 10);
 
-    // Upsert today's performance row with kill_switch = true
-    const { error } = await getSupabase()
+    // Upsert today's performance row with kill_switch = true (service role bypasses RLS)
+    const { error } = await getServiceSupabase()
       .from("performance")
       .upsert(
         {

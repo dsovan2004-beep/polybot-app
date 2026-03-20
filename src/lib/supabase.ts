@@ -104,6 +104,26 @@ export function getSupabase(): SupabaseClient {
 }
 
 // ---------------------------------------------------------------------------
+// Service-role client (bypasses RLS — use for writes in edge routes)
+// ---------------------------------------------------------------------------
+
+let _serviceClient: SupabaseClient | null = null;
+
+export function getServiceSupabase(): SupabaseClient {
+  if (!_serviceClient) {
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceKey) {
+      console.warn("[supabase] No SUPABASE_SERVICE_ROLE_KEY — falling back to anon key");
+      return getSupabase();
+    }
+    _serviceClient = createClient(SUPABASE_URL, serviceKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+  }
+  return _serviceClient;
+}
+
+// ---------------------------------------------------------------------------
 // Markets
 // ---------------------------------------------------------------------------
 

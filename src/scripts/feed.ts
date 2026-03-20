@@ -147,6 +147,67 @@ async function checkKillSwitch(): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// Auto Kill Switch — triggers at -20% drawdown in 24 hours
+// ---------------------------------------------------------------------------
+
+async function checkAutoKillSwitch(): Promise<void> {
+  if (killSwitchActive) return; // already killed
+
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Get today's performance row (starting_balance + pnl_day)
+    const { data: perf } = await supabase
+      .from("performance")
+      .select("starting_balance, pnl_day")
+      .eq("date", today)
+      .single();
+
+    if (!perf || !perf.starting_balance || perf.starting_balance <= 0) return;
+
+    const pnlDay = perf.pnl_day ?? 0;
+    const drawdownPct = (pnlDay / perf.starting_balance) * 100;
+
+    if (drawdownPct <= -20) {
+      console.log(`\n🔴 AUTO KILL: -20% drawdown (${drawdownPct.toFixed(1)}%)`);
+      console.log("   Activating kill switch automatically...\n");
+
+      // Set kill_switch = true in Supabase
+      await supabase
+        .from("performance")
+        .upsert(
+          {
+            date: today,
+            kill_switch: true,
+            drawdown_pct: Math.abs(drawdownPct) / 100,
+          },
+          { onConflict: "date" }
+        );
+
+      killSwitchActive = true;
+
+      // Send Telegram alert
+      await sendTelegramMessage(
+        [
+          `*AUTO KILL SWITCH TRIGGERED*`,
+          ``,
+          `Drawdown: ${drawdownPct.toFixed(1)}% in 24 hours`,
+          `Starting balance: $${perf.starting_balance.toFixed(2)}`,
+          `P&L today: $${pnlDay.toFixed(2)}`,
+          ``,
+          `Trading halted automatically.`,
+          `Check dashboard immediately.`,
+          `polybot-app.pages.dev/bot`,
+        ].join("\n")
+      );
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  ⚠️  Auto kill switch check failed: ${msg}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Stats
 // ---------------------------------------------------------------------------
 
@@ -590,6 +651,9 @@ setInterval(printStats, 60_000);
 
 // Check kill switch every 60 seconds
 setInterval(checkKillSwitch, 60_000);
+
+// Check auto kill switch (drawdown) every 5 minutes
+setInterval(checkAutoKillSwitch, 300_000);
 
 // ---------------------------------------------------------------------------
 // Start
