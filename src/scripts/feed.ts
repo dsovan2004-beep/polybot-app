@@ -189,8 +189,10 @@ interface KalshiMarketFromAPI {
   no_bid_dollars?: number;
   no_ask_dollars?: number;
   last_price_dollars?: number;
+  previous_price_dollars?: number;
   volume: number;
   volume_24h?: number;
+  volume_24h_fp?: number;
   event_ticker?: string;
   [key: string]: unknown; // allow extra fields from API
 }
@@ -517,27 +519,28 @@ async function pollKalshi(): Promise<void> {
     let skippedStatus = 0;
     let skippedPrice = 0;
     let skippedSports = 0;
+    let skippedVolume = 0;
     for (const m of allMarkets) {
       // Accept both "open" and "active" as valid tradeable statuses
       if (m.status !== "open" && m.status !== "active") { skippedStatus++; continue; }
 
-      // Price — use dollar fields from events endpoint, fall back to cents fields
-      let yesPrice = 0;
-      if (m.yes_bid_dollars != null && m.yes_ask_dollars != null &&
-          (m.yes_bid_dollars > 0 || m.yes_ask_dollars > 0)) {
-        // Midpoint of bid/ask in dollars (already 0-1 range)
-        const bid = m.yes_bid_dollars > 0 ? m.yes_bid_dollars : 0;
-        const ask = m.yes_ask_dollars > 0 ? m.yes_ask_dollars : 0;
-        yesPrice = bid > 0 && ask > 0 ? (bid + ask) / 2 : (bid || ask);
-      } else if (m.last_price_dollars != null && m.last_price_dollars > 0) {
-        yesPrice = m.last_price_dollars;
-      } else if (m.yes_bid > 0) {
-        yesPrice = m.yes_bid / 100; // legacy cents field
-      } else if (m.yes_ask > 0) {
-        yesPrice = m.yes_ask / 100;
-      }
-      if (yesPrice < PRICE_MIN || yesPrice > PRICE_MAX) {
+      // Price — use last_price_dollars (most reliable from events endpoint)
+      const yesPrice = m.last_price_dollars
+        ?? m.previous_price_dollars
+        ?? (m.yes_bid_dollars != null && m.yes_bid_dollars > 0 ? m.yes_bid_dollars : 0)
+        ?? 0;
+
+      // Guard: skip if price is NaN, zero, or out of tradeable range
+      if (!yesPrice || isNaN(yesPrice) || yesPrice < PRICE_MIN || yesPrice > PRICE_MAX) {
         skippedPrice++;
+        totalFiltered++;
+        continue;
+      }
+
+      // Volume filter — skip illiquid markets (no edge in dead markets)
+      const vol24h = (m.volume_24h_fp ?? m.volume_24h ?? m.volume ?? 0) as number;
+      if (vol24h < 100) {
+        skippedVolume++;
         totalFiltered++;
         continue;
       }
@@ -559,7 +562,7 @@ async function pollKalshi(): Promise<void> {
       processed++;
 
       console.log(
-        `  📈 ${m.ticker} | ${(yesPrice * 100).toFixed(0)}c | [${category}] ${m.title.slice(0, 55)}`
+        `  📈 ${m.ticker} | ${(yesPrice * 100).toFixed(0)}c | vol:${vol24h} | [${category}] ${m.title.slice(0, 50)}`
       );
 
       // Analyze with Claude
@@ -569,11 +572,11 @@ async function pollKalshi(): Promise<void> {
         m.title,
         category,
         yesPrice,
-        m.volume_24h ?? m.volume ?? 0
+        vol24h
       );
     }
 
-    console.log(`  ✅ Processed ${processed} | skipped: status=${skippedStatus} price=${skippedPrice} sports=${skippedSports}`);
+    console.log(`  ✅ Processed ${processed} | skipped: status=${skippedStatus} price=${skippedPrice} volume=${skippedVolume} sports=${skippedSports}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ❌ Poll failed: ${msg}`);
