@@ -5,7 +5,7 @@
 // Auth: KALSHI-ACCESS-KEY + KALSHI-ACCESS-SIGNATURE + KALSHI-ACCESS-TIMESTAMP
 // ============================================================================
 
-const KALSHI_BASE_URL = "https://trading-api.kalshi.com/trade-api/v2";
+const KALSHI_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -90,7 +90,8 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
 
 /**
  * Sign a Kalshi API request.
- * Message format: `${timestamp_ms}\n${METHOD}\n${path}`
+ * Message format: `${timestamp_ms}${METHOD}${path_without_query}`
+ * No separators between fields. Query params stripped before signing.
  */
 async function signRequest(
   privateKey: CryptoKey,
@@ -98,7 +99,9 @@ async function signRequest(
   method: string,
   path: string
 ): Promise<string> {
-  const message = `${timestampMs}\n${method}\n${path}`;
+  // Strip query params — Kalshi signs only the path portion
+  const pathOnly = path.split("?")[0];
+  const message = `${timestampMs}${method}${pathOnly}`;
   const encoded = new TextEncoder().encode(message);
 
   const signature = await crypto.subtle.sign(

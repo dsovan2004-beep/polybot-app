@@ -27,11 +27,23 @@ export async function GET() {
       });
     }
 
+    console.log("[balance] Kalshi API key present:", apiKey.slice(0, 8) + "...");
+    console.log("[balance] Private key length:", privateKey.length);
+
     // Fetch balance + positions in parallel
     const [balResult, posResult] = await Promise.allSettled([
       getBalance(apiKey, privateKey),
       getPositions(apiKey, privateKey),
     ]);
+
+    if (balResult.status === "rejected") {
+      console.error("[balance] getBalance failed:", balResult.reason);
+    } else {
+      console.log("[balance] Raw balance response:", JSON.stringify(balResult.value));
+    }
+    if (posResult.status === "rejected") {
+      console.error("[balance] getPositions failed:", posResult.reason);
+    }
 
     const balance =
       balResult.status === "fulfilled" ? balResult.value.balance : 0;
@@ -44,6 +56,8 @@ export async function GET() {
       0
     );
 
+    console.log("[balance] Final balance:", balance, "openPositions:", openPositions);
+
     return Response.json({
       ok: true,
       data: {
@@ -51,6 +65,11 @@ export async function GET() {
         openPositions,
         totalValue: Math.round((balance + positionExposure / 100) * 100) / 100,
         paperMode: false,
+        debug: {
+          balanceStatus: balResult.status,
+          balanceError: balResult.status === "rejected" ? String(balResult.reason) : null,
+          positionsStatus: posResult.status,
+        },
       },
     });
   } catch (err) {

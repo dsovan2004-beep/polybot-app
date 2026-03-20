@@ -663,7 +663,11 @@ export default function BotDashboard() {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [killSwitchActive, setKillSwitchActive] = useState(false);
-  const [paperMode, setPaperMode] = useState(true);
+  const [paperMode, setPaperMode] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const saved = localStorage.getItem("polybot_paper_mode");
+    return saved === null ? true : saved === "true";
+  });
   const [balanceData, setBalanceData] = useState<BalanceData | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -699,7 +703,11 @@ export default function BotDashboard() {
       // Switching to LIVE — require confirmation
       if (!confirm("Switch to LIVE MODE? Real money will be at risk.")) return;
     }
-    setPaperMode((prev) => !prev);
+    setPaperMode((prev) => {
+      const next = !prev;
+      localStorage.setItem("polybot_paper_mode", String(next));
+      return next;
+    });
   }, [paperMode]);
 
   // Fetch markets + whales + signals (every 30s)
@@ -886,7 +894,7 @@ export default function BotDashboard() {
                 border: `1px solid rgba(99,102,241,0.3)`,
               }}
             >
-              {balanceData.paperMode ? "PAPER" : `$${balanceData.kalshi.toFixed(2)}`}
+              {balanceData.paperMode ? "PAPER" : `Balance: $${balanceData.kalshi.toFixed(2)}`}
               {balanceData.openPositions > 0 && ` | ${balanceData.openPositions} pos`}
             </span>
           )}
