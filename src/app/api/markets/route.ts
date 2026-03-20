@@ -12,7 +12,8 @@ import {
   getWhaleActivity,
   isConnected,
 } from "@/lib/polymarket";
-import type { MarketRow } from "@/lib/supabase";
+import type { MarketRow, SignalRow } from "@/lib/supabase";
+import { getRecentSignals } from "@/lib/supabase";
 import type { WhaleActivityRow } from "@/lib/polymarket";
 
 // ---------------------------------------------------------------------------
@@ -29,6 +30,7 @@ interface ApiResponse<T = unknown> {
 interface MarketsResponse {
   markets: MarketRow[];
   whales: WhaleActivityRow[];
+  signals: SignalRow[];
   connected: boolean;
 }
 
@@ -60,14 +62,16 @@ export async function GET() {
     ensureFeedRunning();
 
     // Fetch from Supabase regardless of WS state
-    const [markets, whales] = await Promise.all([
+    const [markets, whales, signals] = await Promise.all([
       getRecentMarkets(10),
       getWhaleActivity(10),
+      getRecentSignals(50),
     ]);
 
     const response: MarketsResponse = {
       markets,
       whales,
+      signals,
       connected: isConnected(),
     };
 

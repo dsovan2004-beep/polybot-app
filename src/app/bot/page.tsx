@@ -33,6 +33,7 @@ const css = {
 interface MarketsApiData {
   markets: MarketRow[];
   whales: WhaleRow[];
+  signals: SignalRow[];
   connected: boolean;
 }
 
@@ -402,6 +403,119 @@ function SignalCard({ signal }: { signal: SignalRow }) {
 }
 
 // ---------------------------------------------------------------------------
+// Market Row with Signal Badge
+// ---------------------------------------------------------------------------
+
+function MarketRowItem({
+  market,
+  signal,
+}: {
+  market: MarketRow;
+  signal: SignalRow | undefined;
+}) {
+  const vote = signal?.consensus ?? null;
+  const confidence = signal?.confidence ?? null;
+
+  const badgeColor =
+    vote === "YES" ? "#4ade80" : vote === "NO" ? "#f87171" : "#64748b";
+  const badgeBg =
+    vote === "YES"
+      ? "rgba(74,222,128,0.1)"
+      : vote === "NO"
+      ? "rgba(248,113,113,0.1)"
+      : "rgba(100,116,139,0.1)";
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "10px 0",
+        borderBottom: `0.5px solid ${css.border}`,
+        gap: 12,
+      }}
+    >
+      {/* Title */}
+      <p
+        style={{
+          fontSize: 13,
+          color: css.textPrimary,
+          flex: 1,
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {market.title?.slice(0, 55) ?? "Untitled"}
+      </p>
+
+      {/* Price */}
+      <span
+        style={{
+          fontSize: 13,
+          fontWeight: 600,
+          color: "#4ade80",
+          fontFamily: "monospace",
+          width: 55,
+          textAlign: "right",
+        }}
+      >
+        {fmtPct(market.current_price)}
+      </span>
+
+      {/* Signal badge */}
+      {vote ? (
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            padding: "2px 8px",
+            borderRadius: 4,
+            color: badgeColor,
+            background: badgeBg,
+            width: 72,
+            textAlign: "center",
+          }}
+        >
+          {vote}
+        </span>
+      ) : (
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 500,
+            padding: "2px 8px",
+            borderRadius: 4,
+            color: css.textSecondary,
+            background: "rgba(100,116,139,0.1)",
+            width: 72,
+            textAlign: "center",
+          }}
+        >
+          pending
+        </span>
+      )}
+
+      {/* Confidence */}
+      <span
+        style={{
+          fontSize: 12,
+          fontWeight: 500,
+          color: confidence && confidence >= 67 ? css.indigo : css.textSecondary,
+          fontFamily: "monospace",
+          width: 50,
+          textAlign: "right",
+        }}
+      >
+        {confidence !== null ? `${confidence}%` : "—"}
+      </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Whale Row
 // ---------------------------------------------------------------------------
 
@@ -464,7 +578,7 @@ export default function BotDashboard() {
   // Track which markets we've already sent to swarm (avoid duplicate calls)
   const [analyzedIds, setAnalyzedIds] = useState<Set<string>>(new Set());
 
-  // Fetch markets + whales (every 30s)
+  // Fetch markets + whales + signals (every 30s)
   const loadMarkets = useCallback(async () => {
     try {
       const data = await fetchMarkets();
@@ -472,11 +586,22 @@ export default function BotDashboard() {
       setWhales(data.whales);
       setConnected(data.connected);
 
-      // For each NEW market, call swarm to get AI signal
-      const newMarkets = data.markets.filter((m) => !analyzedIds.has(m.id));
-      if (newMarkets.length > 0) {
+      // Load existing signals from Supabase (persisted by swarm route)
+      if (data.signals && data.signals.length > 0) {
+        setSignals(data.signals);
+      }
+
+      // For each NEW market without a signal, call swarm to analyze
+      const signalMarketIds = new Set(
+        (data.signals ?? []).map((s: SignalRow) => s.market_id)
+      );
+      const unanalyzed = data.markets.filter(
+        (m) => !signalMarketIds.has(m.id) && !analyzedIds.has(m.id)
+      );
+
+      if (unanalyzed.length > 0) {
         const newIds = new Set(analyzedIds);
-        const signalPromises = newMarkets.slice(0, 3).map(async (m) => {
+        const signalPromises = unanalyzed.slice(0, 3).map(async (m) => {
           newIds.add(m.id);
           return fetchSwarmSignal(m);
         });
@@ -489,7 +614,11 @@ export default function BotDashboard() {
           .filter((s): s is SignalRow => s !== null);
 
         if (newSignals.length > 0) {
-          setSignals((prev) => [...newSignals, ...prev].slice(0, 30));
+          setSignals((prev) => {
+            const ids = new Set(prev.map((s) => s.id));
+            const unique = newSignals.filter((s) => !ids.has(s.id));
+            return [...unique, ...prev].slice(0, 50);
+          });
         }
       }
 
@@ -625,43 +754,71 @@ export default function BotDashboard() {
             <Btc5MinPanel data={btc} />
           </div>
 
-          {/* RIGHT — Live Signals */}
+          {/* RIGHT — Markets + Signals */}
           <div>
             <p style={{ fontSize: 12, fontWeight: 600, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-              Live Signals ({signals.length})
+              Markets &amp; Signals ({markets.length})
               {connected && <span style={{ color: "#4ade80", marginLeft: 8, fontSize: 10 }}>WS CONNECTED</span>}
             </p>
-            <div style={{ maxHeight: 400, overflowY: "auto" }}>
-              {signals.length === 0 && markets.length === 0 ? (
-                <Card>
-                  <p style={{ color: css.textSecondary, textAlign: "center", padding: 24, fontSize: 13 }}>
-                    No signals yet — start the feed script
-                  </p>
-                </Card>
-              ) : signals.length === 0 ? (
-                <Card>
-                  <div style={{ padding: 8 }}>
-                    <p style={{ color: css.textSecondary, fontSize: 11, marginBottom: 8 }}>
-                      {markets.length} markets found — analyzing...
-                    </p>
-                    {markets.slice(0, 5).map((m) => (
-                      <div key={m.id} style={{ padding: "6px 0", borderBottom: `0.5px solid ${css.border}`, fontSize: 12 }}>
-                        <span style={{ color: css.textPrimary }}>{m.title?.slice(0, 50)}</span>
-                        <span style={{ color: "#4ade80", marginLeft: 8, fontFamily: "monospace" }}>
-                          {fmtPct(m.current_price)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </Card>
+            <Card>
+              {markets.length === 0 ? (
+                <p style={{ color: css.textSecondary, textAlign: "center", padding: 24, fontSize: 13 }}>
+                  No markets yet — start the feed script
+                </p>
               ) : (
-                signals.map((s) => (
-                  <SignalCard key={s.id} signal={s} />
-                ))
+                <div>
+                  {/* Table header */}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "0 0 8px",
+                      borderBottom: `0.5px solid ${css.border}`,
+                      fontSize: 11,
+                      color: css.textSecondary,
+                      fontWeight: 500,
+                      gap: 12,
+                    }}
+                  >
+                    <span style={{ flex: 1 }}>Market</span>
+                    <span style={{ width: 55, textAlign: "right" }}>Price</span>
+                    <span style={{ width: 72, textAlign: "center" }}>Signal</span>
+                    <span style={{ width: 50, textAlign: "right" }}>Conf</span>
+                  </div>
+                  {/* Market rows */}
+                  <div style={{ maxHeight: 340, overflowY: "auto" }}>
+                    {markets.map((m) => {
+                      // Find latest signal for this market
+                      const latestSignal = signals.find((s) => s.market_id === m.id);
+                      return (
+                        <MarketRowItem
+                          key={m.id}
+                          market={m}
+                          signal={latestSignal}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
               )}
-            </div>
+            </Card>
           </div>
         </div>
+
+        {/* ── SIGNAL HISTORY ── */}
+        {signals.length > 0 && (
+          <div style={{ marginBottom: 24 }}>
+            <p style={{ fontSize: 12, fontWeight: 600, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+              Signal History ({signals.length})
+            </p>
+            <div style={{ maxHeight: 300, overflowY: "auto" }}>
+              {signals.map((s) => (
+                <SignalCard key={s.id} signal={s} />
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* ── BOTTOM — WHALE WATCH ── */}
         <div>
