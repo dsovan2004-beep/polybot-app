@@ -525,10 +525,10 @@ async function pollKalshi(): Promise<void> {
       if (m.status !== "open" && m.status !== "active") { skippedStatus++; continue; }
 
       // Price — use last_price_dollars (most reliable from events endpoint)
-      const yesPrice = m.last_price_dollars
-        ?? m.previous_price_dollars
-        ?? (m.yes_bid_dollars != null && m.yes_bid_dollars > 0 ? m.yes_bid_dollars : 0)
-        ?? 0;
+      // parseFloat ensures string values from API become real numbers
+      const yesPrice = parseFloat(
+        String(m.last_price_dollars ?? m.previous_price_dollars ?? m.yes_bid_dollars ?? 0)
+      );
 
       // Guard: skip if price is NaN, zero, or out of tradeable range
       if (!yesPrice || isNaN(yesPrice) || yesPrice < PRICE_MIN || yesPrice > PRICE_MAX) {
