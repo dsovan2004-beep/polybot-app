@@ -560,56 +560,84 @@ console.log("══════════════════════�
 // Startup self-test: verify Claude + Supabase pipeline works end-to-end
 // ---------------------------------------------------------------------------
 
+// Helper: wrap a promise with a timeout (prevents hanging on network issues)
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
 async function selfTest(): Promise<void> {
   console.log("\n🧪 SELF-TEST: Verifying full signal pipeline...\n");
 
-  // Step 1: Test Supabase write
+  // Step 1: Test Supabase write (10s timeout)
   console.log("  1️⃣  Testing Supabase write...");
-  const testId = "00000000-0000-0000-0000-000000000000";
-  const { error: writeErr } = await supabase.from("signals").insert({
-    market_id: null,
-    strategy: "self_test",
-    claude_vote: "NO_TRADE",
-    gpt4o_vote: null,
-    gemini_vote: null,
-    consensus: "NO_TRADE",
-    confidence: 0,
-    ai_probability: 0.5,
-    market_price: 0.5,
-    price_gap: 0,
-    reasoning: "Self-test signal — safe to delete",
-    acted_on: false,
-  });
-  if (writeErr) {
-    console.error("  ❌ Supabase INSERT failed:", writeErr.message);
-    console.error("  ⚠️  Check RLS policies on signals table — anon role needs INSERT permission");
-    console.error("  ⚠️  Signals will NOT be saved. Fix this before continuing.\n");
+  try {
+    const { error: writeErr } = await withTimeout(
+      supabase.from("signals").insert({
+        market_id: null,
+        strategy: "self_test",
+        claude_vote: "NO_TRADE",
+        gpt4o_vote: null,
+        gemini_vote: null,
+        consensus: "NO_TRADE",
+        confidence: 0,
+        ai_probability: 0.5,
+        market_price: 0.5,
+        price_gap: 0,
+        reasoning: "Self-test signal — safe to delete",
+        acted_on: false,
+      }),
+      10_000,
+      "Supabase INSERT"
+    );
+    if (writeErr) {
+      console.error("  ❌ Supabase INSERT failed:", writeErr.message);
+      console.error("  ⚠️  Check RLS policies on signals table");
+      console.error("  ⚠️  Signals will NOT be saved. Fix this before continuing.\n");
+      return;
+    }
+    console.log("  ✅ Supabase write OK");
+  } catch (err) {
+    console.error("  ❌ Supabase write error:", err instanceof Error ? err.message : String(err));
+    console.log("  ⚠️  Continuing anyway — feed will attempt saves during operation\n");
     return;
   }
-  console.log("  ✅ Supabase write OK");
 
-  // Step 2: Test Supabase read
+  // Step 2: Test Supabase read (10s timeout)
   console.log("  2️⃣  Testing Supabase read...");
-  const { data: readData, error: readErr } = await supabase
-    .from("signals")
-    .select("id, strategy")
-    .eq("strategy", "self_test")
-    .order("created_at", { ascending: false })
-    .limit(1);
-  if (readErr) {
-    console.error("  ❌ Supabase SELECT failed:", readErr.message);
-    return;
-  }
-  if (!readData || readData.length === 0) {
-    console.error("  ❌ Write succeeded but read returned 0 rows — check RLS SELECT policy");
-    return;
-  }
-  console.log("  ✅ Supabase read OK (signal id:", readData[0].id.slice(0, 8) + "...)");
+  try {
+    const { data: readData, error: readErr } = await withTimeout(
+      supabase
+        .from("signals")
+        .select("id, strategy")
+        .eq("strategy", "self_test")
+        .order("created_at", { ascending: false })
+        .limit(1),
+      10_000,
+      "Supabase SELECT"
+    );
+    if (readErr) {
+      console.error("  ❌ Supabase SELECT failed:", readErr.message);
+      return;
+    }
+    if (!readData || readData.length === 0) {
+      console.error("  ❌ Write succeeded but read returned 0 rows — check RLS SELECT policy");
+      return;
+    }
+    console.log("  ✅ Supabase read OK (signal id:", readData[0].id.slice(0, 8) + "...)");
 
-  // Clean up test signal
-  await supabase.from("signals").delete().eq("id", readData[0].id);
+    // Clean up test signal
+    await supabase.from("signals").delete().eq("id", readData[0].id);
+  } catch (err) {
+    console.error("  ❌ Supabase read error:", err instanceof Error ? err.message : String(err));
+    console.log("  ⚠️  Continuing anyway\n");
+  }
 
-  // Step 3: Test Claude API (quick, cheap call)
+  // Step 3: Test Claude API (quick, cheap call — 15s timeout via SDK)
   if (anthropic) {
     console.log("  3️⃣  Testing Claude API...");
     try {
@@ -632,11 +660,18 @@ async function selfTest(): Promise<void> {
     console.log("  ⏭️  Claude test skipped (no ANTHROPIC_API_KEY)");
   }
 
-  // Step 4: Count existing signals
-  const { data: countData } = await supabase
-    .from("signals")
-    .select("id", { count: "exact", head: true });
-  const existingCount = countData?.length ?? 0;
+  // Step 4: Count existing signals (5s timeout)
+  try {
+    const { data: countData } = await withTimeout(
+      supabase.from("signals").select("id", { count: "exact", head: true }),
+      5_000,
+      "Signal count"
+    );
+    const existingCount = countData?.length ?? 0;
+    console.log(`  4️⃣  Existing signals in Supabase: ${existingCount}`);
+  } catch {
+    console.log("  4️⃣  Could not count existing signals (timeout)");
+  }
 
   // Step 5: Check kill switch
   console.log("  5️⃣  Checking kill switch...");
@@ -647,9 +682,7 @@ async function selfTest(): Promise<void> {
     console.log("  ✅ Kill switch OFF — trading allowed");
   }
 
-  console.log(`\n🧪 SELF-TEST PASSED ✅ — Pipeline is healthy`);
-  console.log(`   Existing signals in Supabase: ${existingCount}`);
-  console.log("");
+  console.log(`\n🧪 SELF-TEST COMPLETE ✅ — Starting feed\n`);
 }
 
 // Run self-test, then start the feed
