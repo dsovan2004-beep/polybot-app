@@ -1,5 +1,5 @@
 // ============================================================================
-// PolyBot — Balance API (Sprint 6)
+// PolyBot — Balance API (Sprint 6 → Sprint 7 debug)
 // GET /api/balance
 // Returns Kalshi balance, open positions, total value, paper mode status
 // Edge runtime compatible
@@ -10,9 +10,18 @@ import { getBalance, getPositions } from "@/lib/kalshi";
 export const runtime = "edge";
 
 export async function GET() {
+  const debug: Record<string, unknown> = { step: "init" };
+
   try {
     const apiKey = process.env.KALSHI_API_KEY;
     const privateKey = process.env.KALSHI_PRIVATE_KEY;
+
+    debug.hasApiKey = !!apiKey;
+    debug.apiKeyPrefix = apiKey ? apiKey.slice(0, 8) + "..." : "MISSING";
+    debug.privateKeyLength = privateKey?.length ?? 0;
+    debug.privateKeyStart = privateKey
+      ? privateKey.slice(0, 30) + "..."
+      : "MISSING";
 
     // No Kalshi keys = paper mode
     if (!apiKey || !privateKey) {
@@ -23,26 +32,39 @@ export async function GET() {
           openPositions: 0,
           totalValue: 0,
           paperMode: true,
+          debug: { ...debug, step: "no-keys-paper-mode" },
         },
       });
     }
 
-    console.log("[balance] Kalshi API key present:", apiKey.slice(0, 8) + "...");
-    console.log("[balance] Private key length:", privateKey.length);
-
-    // Fetch balance + positions in parallel
+    // Step 1: Fetch balance
+    debug.step = "fetching-balance";
     const [balResult, posResult] = await Promise.allSettled([
       getBalance(apiKey, privateKey),
       getPositions(apiKey, privateKey),
     ]);
 
+    debug.balanceStatus = balResult.status;
+    debug.positionsStatus = posResult.status;
+
     if (balResult.status === "rejected") {
-      console.error("[balance] getBalance failed:", balResult.reason);
+      const reason = balResult.reason;
+      debug.balanceError =
+        reason instanceof Error ? reason.message : String(reason);
+      console.error("[balance] getBalance failed:", debug.balanceError);
     } else {
-      console.log("[balance] Raw balance response:", JSON.stringify(balResult.value));
+      debug.balanceRaw = balResult.value;
+      console.log(
+        "[balance] Raw balance:",
+        JSON.stringify(balResult.value)
+      );
     }
+
     if (posResult.status === "rejected") {
-      console.error("[balance] getPositions failed:", posResult.reason);
+      const reason = posResult.reason;
+      debug.positionsError =
+        reason instanceof Error ? reason.message : String(reason);
+      console.error("[balance] getPositions failed:", debug.positionsError);
     }
 
     const balance =
@@ -56,27 +78,31 @@ export async function GET() {
       0
     );
 
-    console.log("[balance] Final balance:", balance, "openPositions:", openPositions);
+    debug.step = "done";
+    debug.finalBalance = balance;
+    debug.openPositions = openPositions;
 
     return Response.json({
       ok: true,
       data: {
         kalshi: Math.round(balance * 100) / 100,
         openPositions,
-        totalValue: Math.round((balance + positionExposure / 100) * 100) / 100,
+        totalValue:
+          Math.round((balance + positionExposure / 100) * 100) / 100,
         paperMode: false,
-        debug: {
-          balanceStatus: balResult.status,
-          balanceError: balResult.status === "rejected" ? String(balResult.reason) : null,
-          positionsStatus: posResult.status,
-        },
+        debug,
       },
     });
   } catch (err) {
+    debug.step = "caught-exception";
+    debug.error = err instanceof Error ? err.message : String(err);
+    debug.stack = err instanceof Error ? err.stack?.slice(0, 500) : undefined;
+
     return Response.json(
       {
         ok: false,
         error: err instanceof Error ? err.message : "Unknown error",
+        debug,
       },
       { status: 500 }
     );

@@ -1,11 +1,13 @@
 // ============================================================================
-// PolyBot — Kalshi REST API Client (Sprint 6)
-// RSA private key signing via Web Crypto API (edge-compatible)
-// Base URL: https://trading-api.kalshi.com/trade-api/v2
+// PolyBot — Kalshi REST API Client (Sprint 6 → Sprint 7 fix)
+// RSA-PSS signing via Web Crypto API (edge-compatible)
+// Base URL: https://api.elections.kalshi.com
 // Auth: KALSHI-ACCESS-KEY + KALSHI-ACCESS-SIGNATURE + KALSHI-ACCESS-TIMESTAMP
+// Ref: https://github.com/Kalshi/kalshi-starter-code-python/blob/main/clients.py
 // ============================================================================
 
-const KALSHI_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2";
+const KALSHI_HOST = "https://api.elections.kalshi.com";
+const KALSHI_API_PREFIX = "/trade-api/v2";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -61,46 +63,66 @@ export interface KalshiOrderResult {
 }
 
 // ---------------------------------------------------------------------------
-// RSA Signing (Web Crypto API — edge-compatible)
+// RSA-PSS Signing (Web Crypto API — edge-compatible)
+// Matches official Kalshi Python starter: sign_pss_text()
 // ---------------------------------------------------------------------------
+
+/** Cache imported key to avoid re-importing on every request */
+let _cachedKey: { pem: string; key: CryptoKey } | null = null;
 
 /**
  * Import an RSA private key from PEM string using Web Crypto API.
- * Handles newlines stored as literal `\n` in env vars.
+ * Handles:
+ *  - escaped `\n` from env vars
+ *  - PKCS#8 (BEGIN PRIVATE KEY) — native Web Crypto format
+ *  - PKCS#1 (BEGIN RSA PRIVATE KEY) — also works if DER is valid PKCS#8
  */
 async function importPrivateKey(pem: string): Promise<CryptoKey> {
+  // Return cached key if PEM unchanged
+  if (_cachedKey && _cachedKey.pem === pem) return _cachedKey.key;
+
   // Normalize escaped newlines from env vars
   const normalized = pem.replace(/\\n/g, "\n");
 
+  // Strip PEM headers/footers and whitespace
   const pemBody = normalized
-    .replace(/-----BEGIN (?:RSA )?PRIVATE KEY-----/, "")
-    .replace(/-----END (?:RSA )?PRIVATE KEY-----/, "")
+    .replace(/-----BEGIN (?:RSA )?PRIVATE KEY-----/g, "")
+    .replace(/-----END (?:RSA )?PRIVATE KEY-----/g, "")
     .replace(/\s/g, "");
 
   const binaryDer = Uint8Array.from(atob(pemBody), (c) => c.charCodeAt(0));
 
-  return crypto.subtle.importKey(
+  const key = await crypto.subtle.importKey(
     "pkcs8",
     binaryDer.buffer,
     { name: "RSA-PSS", hash: "SHA-256" },
     false,
     ["sign"]
   );
+
+  _cachedKey = { pem, key };
+  return key;
 }
 
 /**
- * Sign a Kalshi API request.
- * Message format: `${timestamp_ms}${METHOD}${path_without_query}`
- * No separators between fields. Query params stripped before signing.
+ * Sign a Kalshi API request using RSA-PSS with SHA-256.
+ *
+ * CRITICAL: Message format is `${timestamp_ms}${METHOD}${full_path}`
+ *  - NO separators (no \n) between fields
+ *  - Query params stripped before signing
+ *  - full_path INCLUDES the /trade-api/v2 prefix
+ *  - salt_length = DIGEST_LENGTH (32 for SHA-256)
+ *
+ * Matches official: msg_string = timestamp_str + method + path_parts[0]
  */
 async function signRequest(
   privateKey: CryptoKey,
   timestampMs: string,
   method: string,
-  path: string
+  fullPath: string
 ): Promise<string> {
   // Strip query params — Kalshi signs only the path portion
-  const pathOnly = path.split("?")[0];
+  const pathOnly = fullPath.split("?")[0];
   const message = `${timestampMs}${method}${pathOnly}`;
   const encoded = new TextEncoder().encode(message);
 
@@ -110,8 +132,13 @@ async function signRequest(
     encoded
   );
 
-  // Base64 encode the signature
-  return btoa(String.fromCharCode(...new Uint8Array(signature)));
+  // Base64 encode — chunked to avoid stack overflow on large signatures
+  const bytes = new Uint8Array(signature);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +147,7 @@ async function signRequest(
 
 interface KalshiRequestInit {
   method: string;
+  /** Relative path, e.g. "/portfolio/balance" — prefix added automatically */
   path: string;
   body?: unknown;
   apiKey: string;
@@ -129,11 +157,15 @@ interface KalshiRequestInit {
 async function kalshiFetch<T>(init: KalshiRequestInit): Promise<T> {
   const timestampMs = String(Date.now());
   const cryptoKey = await importPrivateKey(init.privateKey);
+
+  // Full path includes /trade-api/v2 prefix — this is what gets signed
+  const fullPath = `${KALSHI_API_PREFIX}${init.path}`;
+
   const signature = await signRequest(
     cryptoKey,
     timestampMs,
     init.method,
-    init.path
+    fullPath
   );
 
   const headers: Record<string, string> = {
@@ -143,7 +175,9 @@ async function kalshiFetch<T>(init: KalshiRequestInit): Promise<T> {
     "KALSHI-ACCESS-TIMESTAMP": timestampMs,
   };
 
-  const res = await fetch(`${KALSHI_BASE_URL}${init.path}`, {
+  const url = `${KALSHI_HOST}${fullPath}`;
+
+  const res = await fetch(url, {
     method: init.method,
     headers,
     body: init.body ? JSON.stringify(init.body) : undefined,
@@ -151,7 +185,9 @@ async function kalshiFetch<T>(init: KalshiRequestInit): Promise<T> {
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    throw new Error(`Kalshi ${res.status}: ${errText.slice(0, 300)}`);
+    throw new Error(
+      `Kalshi ${init.method} ${fullPath} → ${res.status}: ${errText.slice(0, 300)}`
+    );
   }
 
   return res.json() as Promise<T>;
