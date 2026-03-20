@@ -136,7 +136,7 @@ Supabase anon key is read-only when RLS is enabled. Feed script must use SUPABAS
 | Flip to LIVE mode on dashboard | ⬜ NOT STARTED |
 | First real trade via Execute button | ⬜ NOT STARTED |
 | MACD strategy implementation (btc5min.ts) | ✅ COMPLETE |
-| Auto-kill-switch at -20% drawdown | ⬜ NOT STARTED |
+| Auto-kill-switch at -20% drawdown | ✅ COMPLETE |
 | XGBoost ensemble (future) | ⬜ NOT STARTED |
 
 ---
