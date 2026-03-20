@@ -59,12 +59,50 @@
 - Mean reversion after capitulation
 - Exit forced at window close (300 seconds)
 
-## Capital Rules
-- Start with $200 on Polymarket
-- First month: Maker rebates only
-- Only scale after 30 validated paper signals
-- Never risk more than 10% per trade
-- Kill switch at -20% in 24 hours
+## Capital Rules — OFFICIAL (Sprint 7, Locked In)
+
+### Position Sizing Rules
+
+**Phase 1 — First 5 trades:**
+- Bankroll: $25
+- Size: $1.25 per trade (5%)
+- Goal: Learn the system
+- Goal: Validate signals work
+- Zero stress — just learning
+
+**Phase 2 — Trades 6-30:**
+- Condition: Win rate > 67% after 10 trades
+- Size: $2.50 per trade (10%)
+- Goal: Build confidence
+- Goal: Prove the edge is real
+
+**Phase 3 — After 30 trades validated:**
+- Condition: Win rate > 67% proven
+- Action: Deposit $100-200 more
+- Size: 5% of new bankroll
+- Goal: Start compounding
+
+### Signal Rules For Manual Trading
+
+**ONLY execute on:**
+- Logical Arb strategy
+- Confidence >= 80%
+- Markets expiring 3+ days away
+- Price gap >= 15%
+
+**NEVER execute on:**
+- BTC 5-min markets (too fast)
+- Markets expiring today
+- Confidence below 80%
+- Pending signals (wait for YES/NO)
+
+### The Mission
+
+First 30 trades = proving the edge.
+NOT about making money yet.
+After 30 trades validated → scale.
+
+$25 → $100 → $1,000 → $1,000,000
 
 ## Signal Validation Rules (Sprint 5)
 - 50 signals generated in first live session ✅
