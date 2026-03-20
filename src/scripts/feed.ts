@@ -76,6 +76,14 @@ const SPORTS_KEYWORDS = [
   "yankees", "dodgers", "tournament",
   "pga", "golf", "baseball",
   "stanley cup", "championship",
+  // Sprint 6 — cricket, rugby, motorsport, combat sports
+  "t20", "cricket", "test match",
+  "innings", "wicket", "odi", "ipl",
+  "rugby", "ashes", "bowled", "batting",
+  "twenty20", "nrl", "afl", "formula",
+  "nascar", "racing", "grand prix",
+  "cycling", "tour de france",
+  "wrestling", "wwe", "ufc fight",
 ];
 
 // ---------------------------------------------------------------------------

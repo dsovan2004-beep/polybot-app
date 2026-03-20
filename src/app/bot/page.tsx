@@ -307,7 +307,7 @@ function Btc5MinPanel({ data }: { data: Btc5MinData | null }) {
 // Signal Card
 // ---------------------------------------------------------------------------
 
-function SignalCard({ signal }: { signal: SignalRow }) {
+function SignalCard({ signal, markets }: { signal: SignalRow; markets: MarketRow[] }) {
   const consensus = signal.consensus ?? "NO_TRADE";
   const badgeColor =
     consensus === "YES" ? "#4ade80" : consensus === "NO" ? "#f87171" : "#64748b";
@@ -323,6 +323,23 @@ function SignalCard({ signal }: { signal: SignalRow }) {
   const confidence = signal.confidence ?? 0;
   const confidencePct = Math.min(100, confidence);
 
+  // Look up market title from markets array
+  const matchedMarket = signal.market_id
+    ? markets.find((m) => m.id === signal.market_id)
+    : null;
+  const marketTitle = matchedMarket?.title?.slice(0, 60)
+    ?? signal.market_id?.slice(0, 12) + "..."
+    ?? "Unknown market";
+
+  // Strategy display — format nicely
+  const strategy = signal.strategy ?? "unknown";
+  const strategyLabel = strategy === "news_lag" ? "News Lag"
+    : strategy === "sentiment_fade" ? "Sentiment Fade"
+    : strategy === "logical_arb" ? "Logical Arb"
+    : strategy === "maker" ? "Maker"
+    : strategy === "self_test" ? "Self Test"
+    : strategy;
+
   return (
     <div
       style={{
@@ -337,14 +354,17 @@ function SignalCard({ signal }: { signal: SignalRow }) {
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ fontSize: 13, color: css.textPrimary, fontWeight: 500 }}>
-            {signal.strategy}
+          <p style={{ fontSize: 13, color: css.textPrimary, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {marketTitle}
           </p>
           <p style={{ fontSize: 11, color: css.textSecondary, marginTop: 2 }}>
             {fmtTime(signal.created_at)}
+            {signal.reasoning && (
+              <span style={{ marginLeft: 8 }}>— {signal.reasoning.slice(0, 60)}</span>
+            )}
           </p>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           <span
             style={{
               fontSize: 11,
@@ -367,7 +387,7 @@ function SignalCard({ signal }: { signal: SignalRow }) {
               color: css.indigo,
             }}
           >
-            {signal.strategy}
+            {strategyLabel}
           </span>
         </div>
       </div>
@@ -914,7 +934,7 @@ export default function BotDashboard() {
             </p>
             <div style={{ maxHeight: 300, overflowY: "auto" }}>
               {signals.map((s) => (
-                <SignalCard key={s.id} signal={s} />
+                <SignalCard key={s.id} signal={s} markets={markets} />
               ))}
             </div>
           </div>
