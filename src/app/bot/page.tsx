@@ -328,8 +328,7 @@ function SignalCard({ signal, markets }: { signal: SignalRow; markets: MarketRow
     ? markets.find((m) => m.id === signal.market_id)
     : null;
   const marketTitle = matchedMarket?.title?.slice(0, 60)
-    ?? signal.market_id?.slice(0, 12) + "..."
-    ?? "Unknown market";
+    ?? (signal.market_id ? signal.market_id.slice(0, 12) + "..." : "Unknown market");
 
   // Strategy display — format nicely
   const strategy = signal.strategy ?? "unknown";
