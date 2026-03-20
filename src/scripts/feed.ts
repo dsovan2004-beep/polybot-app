@@ -405,18 +405,40 @@ What is your analysis?`;
     const claudeMs = Date.now() - claudeStart;
 
     const content = res.content[0]?.type === "text" ? res.content[0].text : "";
+    console.log(`  📝 Claude raw: ${content.slice(0, 200)}`);
+
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       console.error("  ⚠️  No JSON in Claude response");
       return;
     }
 
-    const parsed: ClaudeSignal = JSON.parse(jsonMatch[0]);
+    let parsed: ClaudeSignal;
+    try {
+      parsed = JSON.parse(jsonMatch[0]);
+    } catch (parseErr) {
+      console.error(`  ⚠️  JSON parse failed: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
+      return;
+    }
+
+    // Validate required fields — skip if missing
+    if (!parsed.vote || parsed.confidence == null || parsed.probability == null) {
+      console.error(`  ⚠️  Missing fields: vote=${parsed.vote} conf=${parsed.confidence} prob=${parsed.probability}`);
+      return;
+    }
+
     const vote = String(parsed.vote).toUpperCase();
     if (!["YES", "NO", "NO_TRADE"].includes(vote)) return;
 
-    const confidence = Math.max(0, Math.min(100, Math.round(Number(parsed.confidence))));
-    const probability = Math.max(0, Math.min(1, Number(parsed.probability)));
+    const confidence = Math.max(0, Math.min(100, Math.round(parseFloat(String(parsed.confidence)))));
+    const probability = Math.max(0, Math.min(1, parseFloat(String(parsed.probability))));
+
+    // Guard against NaN from bad parsing
+    if (isNaN(confidence) || isNaN(probability)) {
+      console.error(`  ⚠️  NaN detected: conf=${parsed.confidence} prob=${parsed.probability}`);
+      return;
+    }
+
     const priceGap = Math.abs(probability - yesPrice);
 
     const finalVote =
