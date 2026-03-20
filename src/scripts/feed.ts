@@ -493,19 +493,32 @@ async function pollKalshi(): Promise<void> {
     totalMarketsFound = allMarkets.length;
     console.log(`  📦 ${allMarkets.length} markets from ${data.events?.length ?? 0} events`);
 
-    let processed = 0;
-    for (const m of allMarkets) {
-      if (m.status !== "open") continue;
+    // Debug: log first market to see actual API shape
+    if (allMarkets.length > 0) {
+      const sample = allMarkets[0];
+      console.log(`  🔍 Sample market keys: ${Object.keys(sample).join(", ")}`);
+      console.log(`  🔍 Sample: ticker=${sample.ticker} status=${sample.status} yes_bid=${sample.yes_bid} yes_ask=${sample.yes_ask} title=${sample.title?.slice(0, 40)}`);
+    }
 
-      // Price filter
-      const yesPrice = m.yes_bid > 0 ? m.yes_bid / 100 : 0;
+    let processed = 0;
+    let skippedStatus = 0;
+    let skippedPrice = 0;
+    let skippedSports = 0;
+    for (const m of allMarkets) {
+      if (m.status !== "open") { skippedStatus++; continue; }
+
+      // Price filter — use yes_ask as fallback if yes_bid is 0
+      const rawPrice = m.yes_bid > 0 ? m.yes_bid : m.yes_ask > 0 ? m.yes_ask : 0;
+      const yesPrice = rawPrice > 0 ? rawPrice / 100 : 0;
       if (yesPrice < PRICE_MIN || yesPrice > PRICE_MAX) {
+        skippedPrice++;
         totalFiltered++;
         continue;
       }
 
       // Sports filter — skip sports markets entirely
       if (isSports(m.title)) {
+        skippedSports++;
         totalFiltered++;
         continue;
       }
@@ -534,7 +547,7 @@ async function pollKalshi(): Promise<void> {
       );
     }
 
-    console.log(`  ✅ Processed ${processed} markets this poll`);
+    console.log(`  ✅ Processed ${processed} | skipped: status=${skippedStatus} price=${skippedPrice} sports=${skippedSports}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ❌ Poll failed: ${msg}`);
