@@ -314,7 +314,10 @@ export async function placeLimitOrder(
         : { no_price: params.price }),
     };
 
-    const data = await kalshiFetch<{ order: { order_id: string } }>({
+    console.log(`[kalshi] LIVE ORDER request:`, JSON.stringify(body));
+
+    // Kalshi may return { order: { order_id } } or { order_id } — handle both
+    const data = await kalshiFetch<Record<string, unknown>>({
       method: "POST",
       path: "/portfolio/orders",
       body,
@@ -322,13 +325,35 @@ export async function placeLimitOrder(
       privateKey,
     });
 
+    console.log(`[kalshi] LIVE ORDER response:`, JSON.stringify(data).slice(0, 500));
+
+    // Extract order ID from response — try multiple shapes
+    const orderObj = data.order as Record<string, unknown> | undefined;
+    const orderId =
+      (orderObj?.order_id as string) ??
+      (data.order_id as string) ??
+      null;
+
+    if (!orderId) {
+      console.error(`[kalshi] No order_id in response:`, JSON.stringify(data).slice(0, 300));
+      return {
+        success: false,
+        orderId: null,
+        error: `Kalshi returned no order_id. Response: ${JSON.stringify(data).slice(0, 200)}`,
+        paperTrade: false,
+      };
+    }
+
+    console.log(`[kalshi] LIVE ORDER placed: ${orderId}`);
+
     return {
       success: true,
-      orderId: data.order?.order_id ?? null,
+      orderId,
       error: null,
       paperTrade: false,
     };
   } catch (err) {
+    console.error(`[kalshi] LIVE ORDER failed:`, err instanceof Error ? err.message : String(err));
     return {
       success: false,
       orderId: null,

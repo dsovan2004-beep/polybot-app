@@ -131,16 +131,21 @@ export async function POST(request: Request) {
 
     debug.orderSuccess = orderResult.success;
     debug.orderId = orderResult.orderId;
+    debug.orderError = orderResult.error;
 
-    if (!orderResult.success) {
-      debug.orderError = orderResult.error;
+    // Only proceed if Kalshi actually returned an order ID
+    if (!orderResult.success || !orderResult.orderId) {
       return Response.json(
-        { ok: false, error: orderResult.error ?? "Order failed", debug },
+        {
+          ok: false,
+          error: orderResult.error ?? "Kalshi did not return an order ID",
+          debug,
+        },
         { status: 500 }
       );
     }
 
-    // ---- 6. Save to Supabase trades table ----
+    // ---- 6. Save to Supabase trades table (only after confirmed Kalshi order) ----
     debug.step = "save-trade";
     const { error: tradeErr } = await getServiceSupabase()
       .from("trades")
