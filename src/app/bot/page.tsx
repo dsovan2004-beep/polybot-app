@@ -104,6 +104,35 @@ async function fetchBtc5Min(): Promise<Btc5MinData> {
   return json.data;
 }
 
+interface BalanceData {
+  kalshi: number;
+  openPositions: number;
+  totalValue: number;
+  paperMode: boolean;
+}
+
+async function fetchBalance(): Promise<BalanceData> {
+  const res = await fetch("/api/balance");
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error ?? "Failed to load balance");
+  return json.data;
+}
+
+async function executeTrade(
+  signal: { id: string; market_id: string; consensus: string; confidence: number; market_price: number; strategy: string },
+  marketTicker: string,
+  paperTrade: boolean
+): Promise<{ orderId: string; size: number; paperTrade: boolean }> {
+  const res = await fetch("/api/trade", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ signal, marketTicker, paperTrade }),
+  });
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error ?? "Trade failed");
+  return json.data;
+}
+
 // ---------------------------------------------------------------------------
 // Formatters
 // ---------------------------------------------------------------------------
@@ -429,10 +458,12 @@ function MarketRowItem({
   market,
   signal,
   isPaper,
+  onExecute,
 }: {
   market: MarketRow;
   signal: SignalRow | undefined;
   isPaper: boolean;
+  onExecute?: (signal: SignalRow, market: MarketRow) => void;
 }) {
   const vote = signal?.consensus ?? null;
   const confidence = signal?.confidence ?? null;
@@ -548,6 +579,26 @@ function MarketRowItem({
       >
         {isPaper ? "PAPER" : "LIVE"}
       </span>
+
+      {/* Execute button — only in LIVE mode with actionable signal */}
+      {!isPaper && signal && (signal.consensus === "YES" || signal.consensus === "NO") && onExecute && (
+        <button
+          onClick={() => onExecute(signal, market)}
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            padding: "2px 8px",
+            borderRadius: 4,
+            background: "rgba(99,102,241,0.15)",
+            color: css.indigo,
+            border: `1px solid rgba(99,102,241,0.3)`,
+            cursor: "pointer",
+            width: 52,
+          }}
+        >
+          EXEC
+        </button>
+      )}
     </div>
   );
 }
@@ -613,6 +664,8 @@ export default function BotDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [killSwitchActive, setKillSwitchActive] = useState(false);
   const [paperMode, setPaperMode] = useState(true);
+  const [balanceData, setBalanceData] = useState<BalanceData | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
   // Track which markets we've already sent to swarm (avoid duplicate calls)
   const [analyzedIds, setAnalyzedIds] = useState<Set<string>>(new Set());
@@ -709,19 +762,74 @@ export default function BotDashboard() {
     }
   }, []);
 
+  // Fetch Kalshi balance
+  const loadBalance = useCallback(async () => {
+    try {
+      const data = await fetchBalance();
+      setBalanceData(data);
+    } catch {
+      // Silent fail
+    }
+  }, []);
+
+  // Auto-clear toast after 4 seconds
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
   useEffect(() => {
     loadMarkets();
     loadBtc();
     checkKillSwitch();
+    loadBalance();
     const dashInterval = setInterval(loadMarkets, 30_000);
     const btcInterval = setInterval(loadBtc, 5_000);
     const killInterval = setInterval(checkKillSwitch, 60_000);
+    const balInterval = setInterval(loadBalance, 60_000);
     return () => {
       clearInterval(dashInterval);
       clearInterval(btcInterval);
       clearInterval(killInterval);
+      clearInterval(balInterval);
     };
-  }, [loadMarkets, loadBtc, checkKillSwitch]);
+  }, [loadMarkets, loadBtc, checkKillSwitch, loadBalance]);
+
+  // Execute trade handler
+  const handleExecute = useCallback(
+    async (signal: SignalRow, market: MarketRow) => {
+      if (paperMode) return; // Safety: only in LIVE mode
+      if (
+        !confirm(
+          `Execute ${signal.consensus} on "${market.title?.slice(0, 40)}"? This will place a REAL order.`
+        )
+      )
+        return;
+
+      try {
+        const result = await executeTrade(
+          {
+            id: signal.id,
+            market_id: signal.market_id ?? "",
+            consensus: signal.consensus ?? "NO_TRADE",
+            confidence: signal.confidence ?? 0,
+            market_price: signal.market_price ?? 0.5,
+            strategy: signal.strategy ?? "unknown",
+          },
+          market.polymarket_id ?? market.id,
+          paperMode
+        );
+        setToast(
+          `Order placed: ${result.orderId?.slice(0, 12)} | $${result.size} | ${result.paperTrade ? "PAPER" : "LIVE"}`
+        );
+        loadBalance();
+      } catch (err) {
+        setToast(`Trade failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+      }
+    },
+    [paperMode, loadBalance]
+  );
 
   // Performance will be wired to Supabase in a future sprint
 
@@ -765,6 +873,23 @@ export default function BotDashboard() {
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: paperMode ? "#4ade80" : "#f87171", display: "inline-block" }} />
             {paperMode ? "PAPER" : "LIVE"}
           </button>
+          {balanceData && (
+            <span
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: css.textPrimary,
+                fontFamily: "monospace",
+                padding: "3px 10px",
+                borderRadius: 6,
+                background: "rgba(99,102,241,0.1)",
+                border: `1px solid rgba(99,102,241,0.3)`,
+              }}
+            >
+              {balanceData.paperMode ? "PAPER" : `$${balanceData.kalshi.toFixed(2)}`}
+              {balanceData.openPositions > 0 && ` | ${balanceData.openPositions} pos`}
+            </span>
+          )}
         </div>
         <button
           onClick={activateKillSwitch}
@@ -786,6 +911,27 @@ export default function BotDashboard() {
       </header>
 
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 24px" }}>
+        {/* ── TOAST ── */}
+        {toast && (
+          <div
+            style={{
+              position: "fixed",
+              top: 60,
+              right: 24,
+              zIndex: 50,
+              padding: "10px 20px",
+              borderRadius: 8,
+              background: "#4ade80",
+              color: "#0f172a",
+              fontSize: 13,
+              fontWeight: 600,
+              boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            }}
+          >
+            {toast}
+          </div>
+        )}
+
         {/* ── KILL SWITCH ALERT ── */}
         {killSwitchActive && (
           <div
@@ -915,6 +1061,7 @@ export default function BotDashboard() {
                           market={m}
                           signal={latestSignal}
                           isPaper={paperMode}
+                          onExecute={handleExecute}
                         />
                       );
                     })}

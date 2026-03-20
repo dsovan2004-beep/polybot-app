@@ -12,6 +12,28 @@ import WebSocket from "ws";
 import * as dotenv from "dotenv";
 import * as path from "path";
 
+// Telegram alert helper (inline for Mac script — avoids edge-only import)
+async function sendTelegramMessage(text: string): Promise<boolean> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) return false;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        parse_mode: "Markdown",
+        disable_web_page_preview: true,
+      }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 // Load .env.local from project root
 dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
 
@@ -360,6 +382,23 @@ What is your analysis?`;
     console.log(
       `  ${voteColor} SIGNAL: ${finalVote} | conf ${confidence}% | gap ${(priceGap * 100).toFixed(1)}% | ${parsed.reason?.slice(0, 50)}`
     );
+
+    // Send Telegram alert for actionable signals (confidence >= 67% AND gap >= 10%)
+    if (finalVote !== "NO_TRADE" && confidence >= MIN_CONFIDENCE && priceGap >= MIN_PRICE_GAP) {
+      const alertMsg = [
+        `*PolyBot Signal*`,
+        ``,
+        `Market: ${title.slice(0, 60)}`,
+        `Signal: ${finalVote}`,
+        `Confidence: ${confidence}%`,
+        `Price: ${(price * 100).toFixed(0)}c`,
+        `Strategy: ${strategy}`,
+        `Why: ${parsed.reason?.slice(0, 80) ?? ""}`,
+        ``,
+        `polybot-app.pages.dev/bot`,
+      ].join("\n");
+      sendTelegramMessage(alertMsg).catch(() => {});
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ⚠️  Claude analysis failed: ${msg}`);
@@ -560,10 +599,10 @@ console.log("══════════════════════�
 // Startup self-test: verify Claude + Supabase pipeline works end-to-end
 // ---------------------------------------------------------------------------
 
-// Helper: wrap a promise with a timeout (prevents hanging on network issues)
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+// Helper: wrap a thenable with a timeout (prevents hanging on network issues)
+function withTimeout<T>(thenable: PromiseLike<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
-    promise,
+    Promise.resolve(thenable),
     new Promise<T>((_, reject) =>
       setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
     ),
@@ -576,7 +615,7 @@ async function selfTest(): Promise<void> {
   // Step 1: Test Supabase write (10s timeout)
   console.log("  1️⃣  Testing Supabase write...");
   try {
-    const { error: writeErr } = await withTimeout(
+    const writeResult = await withTimeout(
       supabase.from("signals").insert({
         market_id: null,
         strategy: "self_test",
@@ -590,12 +629,12 @@ async function selfTest(): Promise<void> {
         price_gap: 0,
         reasoning: "Self-test signal — safe to delete",
         acted_on: false,
-      }),
+      }) as PromiseLike<{ error: { message: string } | null }>,
       10_000,
       "Supabase INSERT"
     );
-    if (writeErr) {
-      console.error("  ❌ Supabase INSERT failed:", writeErr.message);
+    if (writeResult.error) {
+      console.error("  ❌ Supabase INSERT failed:", writeResult.error.message);
       console.error("  ⚠️  Check RLS policies on signals table");
       console.error("  ⚠️  Signals will NOT be saved. Fix this before continuing.\n");
       return;
@@ -610,28 +649,28 @@ async function selfTest(): Promise<void> {
   // Step 2: Test Supabase read (10s timeout)
   console.log("  2️⃣  Testing Supabase read...");
   try {
-    const { data: readData, error: readErr } = await withTimeout(
+    const readResult = await withTimeout(
       supabase
         .from("signals")
         .select("id, strategy")
         .eq("strategy", "self_test")
         .order("created_at", { ascending: false })
-        .limit(1),
+        .limit(1) as PromiseLike<{ data: any[] | null; error: { message: string } | null }>,
       10_000,
       "Supabase SELECT"
     );
-    if (readErr) {
-      console.error("  ❌ Supabase SELECT failed:", readErr.message);
+    if (readResult.error) {
+      console.error("  ❌ Supabase SELECT failed:", readResult.error.message);
       return;
     }
-    if (!readData || readData.length === 0) {
+    if (!readResult.data || readResult.data.length === 0) {
       console.error("  ❌ Write succeeded but read returned 0 rows — check RLS SELECT policy");
       return;
     }
-    console.log("  ✅ Supabase read OK (signal id:", readData[0].id.slice(0, 8) + "...)");
+    console.log("  ✅ Supabase read OK (signal id:", readResult.data[0].id.slice(0, 8) + "...)");
 
     // Clean up test signal
-    await supabase.from("signals").delete().eq("id", readData[0].id);
+    await supabase.from("signals").delete().eq("id", readResult.data[0].id);
   } catch (err) {
     console.error("  ❌ Supabase read error:", err instanceof Error ? err.message : String(err));
     console.log("  ⚠️  Continuing anyway\n");
@@ -662,12 +701,12 @@ async function selfTest(): Promise<void> {
 
   // Step 4: Count existing signals (5s timeout)
   try {
-    const { data: countData } = await withTimeout(
-      supabase.from("signals").select("id", { count: "exact", head: true }),
+    const countResult = await withTimeout(
+      supabase.from("signals").select("id", { count: "exact", head: true }) as PromiseLike<{ data: any[] | null }>,
       5_000,
       "Signal count"
     );
-    const existingCount = countData?.length ?? 0;
+    const existingCount = countResult.data?.length ?? 0;
     console.log(`  4️⃣  Existing signals in Supabase: ${existingCount}`);
   } catch {
     console.log("  4️⃣  Could not count existing signals (timeout)");
@@ -678,8 +717,18 @@ async function selfTest(): Promise<void> {
   const killed = await checkKillSwitch();
   if (killed) {
     console.log("  🔴 Kill switch is ACTIVE — Claude analysis will be blocked");
+    // Notify via Telegram
+    sendTelegramMessage("*KILL SWITCH ACTIVE*\nFeed started but trading is halted.\npolybot-app.pages.dev/bot").catch(() => {});
   } else {
     console.log("  ✅ Kill switch OFF — trading allowed");
+  }
+
+  // Step 6: Verify Telegram
+  const tgOk = await sendTelegramMessage("*PolyBot Feed Started*\nSelf-test passed. Watching for signals.");
+  if (tgOk) {
+    console.log("  6️⃣  ✅ Telegram alert sent");
+  } else {
+    console.log("  6️⃣  ⏭️  Telegram skipped (no TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID)");
   }
 
   console.log(`\n🧪 SELF-TEST COMPLETE ✅ — Starting feed\n`);
