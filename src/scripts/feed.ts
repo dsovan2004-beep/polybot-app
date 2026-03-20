@@ -28,13 +28,19 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
   process.exit(1);
 }
 
-if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+const useServiceRole = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
+if (useServiceRole) {
   console.log("✅ Using SUPABASE_SERVICE_ROLE_KEY (bypasses RLS)");
 } else {
   console.warn("⚠️  Using anon key — RLS may block signal writes. Add SUPABASE_SERVICE_ROLE_KEY to .env.local");
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false,
+  },
+});
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 if (!ANTHROPIC_API_KEY) {
