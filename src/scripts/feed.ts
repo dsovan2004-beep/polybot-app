@@ -75,7 +75,8 @@ const anthropic = ANTHROPIC_API_KEY
 const KALSHI_HOST = "https://api.elections.kalshi.com";
 const KALSHI_API_PREFIX = "/trade-api/v2";
 const KALSHI_API_KEY = process.env.KALSHI_API_KEY;
-const KALSHI_PRIVATE_KEY = process.env.KALSHI_PRIVATE_KEY;
+const rawKalshiKey = process.env.KALSHI_PRIVATE_KEY || "";
+const KALSHI_PRIVATE_KEY = rawKalshiKey.replace(/\\n/g, "\n");
 
 if (!KALSHI_API_KEY || !KALSHI_PRIVATE_KEY) {
   console.error("Missing KALSHI_API_KEY or KALSHI_PRIVATE_KEY in .env.local");
@@ -126,12 +127,12 @@ function signRequest(
 ): string {
   const pathOnly = fullPath.split("?")[0];
   const message = `${timestampMs}${method}${pathOnly}`;
-  const normalized = privateKeyPem.replace(/\\n/g, "\n");
+  // Key is already normalized at load time (literal \n → real newlines)
   const sign = crypto.createSign("RSA-SHA256");
   sign.update(message);
   sign.end();
   return sign.sign(
-    { key: normalized, padding: crypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: 32 },
+    { key: privateKeyPem, padding: crypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: 32 },
     "base64"
   );
 }

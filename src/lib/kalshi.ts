@@ -156,7 +156,9 @@ interface KalshiRequestInit {
 
 async function kalshiFetch<T>(init: KalshiRequestInit): Promise<T> {
   const timestampMs = String(Date.now());
-  const cryptoKey = await importPrivateKey(init.privateKey);
+  // Normalize literal \n from env vars before importing
+  const normalizedKey = init.privateKey.replace(/\\n/g, "\n");
+  const cryptoKey = await importPrivateKey(normalizedKey);
 
   // Full path includes /trade-api/v2 prefix — this is what gets signed
   const fullPath = `${KALSHI_API_PREFIX}${init.path}`;
