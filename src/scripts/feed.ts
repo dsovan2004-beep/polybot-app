@@ -179,13 +179,20 @@ interface KalshiMarketFromAPI {
   ticker: string;
   title: string;
   status: string;
+  // Kalshi events endpoint returns dollar-denominated fields
   yes_bid: number;
   yes_ask: number;
   no_bid: number;
   no_ask: number;
+  yes_bid_dollars?: number;
+  yes_ask_dollars?: number;
+  no_bid_dollars?: number;
+  no_ask_dollars?: number;
+  last_price_dollars?: number;
   volume: number;
   volume_24h?: number;
   event_ticker?: string;
+  [key: string]: unknown; // allow extra fields from API
 }
 
 interface KalshiEvent {
@@ -303,8 +310,7 @@ function categorize(title: string): string {
 // Supabase saves
 // ---------------------------------------------------------------------------
 
-async function saveMarket(m: KalshiMarketFromAPI): Promise<string | null> {
-  const yesPrice = m.yes_bid > 0 ? m.yes_bid / 100 : 0.5;
+async function saveMarket(m: KalshiMarketFromAPI, yesPrice: number): Promise<string | null> {
   const { data, error } = await supabase
     .from("markets")
     .upsert(
@@ -500,16 +506,36 @@ async function pollKalshi(): Promise<void> {
       console.log(`  🔍 Sample: ticker=${sample.ticker} status=${sample.status} yes_bid=${sample.yes_bid} yes_ask=${sample.yes_ask} title=${sample.title?.slice(0, 40)}`);
     }
 
+    // Log unique status values for debugging
+    const statusCounts = new Map<string, number>();
+    for (const m of allMarkets) {
+      statusCounts.set(m.status, (statusCounts.get(m.status) ?? 0) + 1);
+    }
+    console.log(`  📋 Status values: ${[...statusCounts.entries()].map(([k, v]) => `${k}=${v}`).join(", ")}`);
+
     let processed = 0;
     let skippedStatus = 0;
     let skippedPrice = 0;
     let skippedSports = 0;
     for (const m of allMarkets) {
-      if (m.status !== "open") { skippedStatus++; continue; }
+      // Accept both "open" and "active" as valid tradeable statuses
+      if (m.status !== "open" && m.status !== "active") { skippedStatus++; continue; }
 
-      // Price filter — use yes_ask as fallback if yes_bid is 0
-      const rawPrice = m.yes_bid > 0 ? m.yes_bid : m.yes_ask > 0 ? m.yes_ask : 0;
-      const yesPrice = rawPrice > 0 ? rawPrice / 100 : 0;
+      // Price — use dollar fields from events endpoint, fall back to cents fields
+      let yesPrice = 0;
+      if (m.yes_bid_dollars != null && m.yes_ask_dollars != null &&
+          (m.yes_bid_dollars > 0 || m.yes_ask_dollars > 0)) {
+        // Midpoint of bid/ask in dollars (already 0-1 range)
+        const bid = m.yes_bid_dollars > 0 ? m.yes_bid_dollars : 0;
+        const ask = m.yes_ask_dollars > 0 ? m.yes_ask_dollars : 0;
+        yesPrice = bid > 0 && ask > 0 ? (bid + ask) / 2 : (bid || ask);
+      } else if (m.last_price_dollars != null && m.last_price_dollars > 0) {
+        yesPrice = m.last_price_dollars;
+      } else if (m.yes_bid > 0) {
+        yesPrice = m.yes_bid / 100; // legacy cents field
+      } else if (m.yes_ask > 0) {
+        yesPrice = m.yes_ask / 100;
+      }
       if (yesPrice < PRICE_MIN || yesPrice > PRICE_MAX) {
         skippedPrice++;
         totalFiltered++;
@@ -527,7 +553,7 @@ async function pollKalshi(): Promise<void> {
       const category = categorize(m.title);
 
       // Save market to Supabase (with kalshi_ticker)
-      const marketId = await saveMarket(m);
+      const marketId = await saveMarket(m, yesPrice);
       if (!marketId) continue;
       totalSaved++;
       processed++;
