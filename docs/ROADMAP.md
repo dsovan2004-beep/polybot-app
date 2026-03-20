@@ -24,22 +24,38 @@
 - Polymarket WS feed deployed (feed.ts)
 - Claude signal engine live with strategy classification
 - Whale activity tracking live
-- Split architecture validated (Railway → Supabase → Dashboard)
+- Split architecture validated (Mac → Supabase → Dashboard)
 - Key discovery: Cloudflare Workers are stateless, cannot hold WS
 
-## Phase 5 — First Real Money: IN PROGRESS 🔄
-- Deploy feed.ts to Railway (24/7)
-- Set up Polymarket wallet + private key
-- Fund $200 USDC
-- Place first MAKER order
-- Earn first USDC rebate
-- Validate 30 paper signals
+## Phase 5 — Signal Intelligence: COMPLETE ✅
+- 50 signals generated in first live session
+- Claude Haiku pipeline (20x cheaper than Sonnet)
+- Full end-to-end pipeline working
+- Dashboard showing real YES/NO/NO_TRADE votes with confidence %
+- Signal History section live
+- Sports filter expanded (3 rounds)
+- Whale Watch showing market titles (not UUIDs)
+- Claude analysis moved inline in feed.ts (bypasses Cloudflare timeout)
+- Category gate removed (was blocking 90% of markets)
+- Startup self-test verifies pipeline before trading
+- RLS policy fixed, service role key for writes
 
-## Phase 6 — Scale: NOT STARTED
-- Scale to $500 deployed
-- Add Kelly position sizer
-- Add Telegram alerts
+## Phase 6 — First Real Money: IN PROGRESS 🔄
+- Fund Kalshi account ($200 via debit card)
+- Get Kalshi API key from Settings
+- Wire Kalshi trading API to PolyBot
+- Place first MAKER order on BTC 5-min market
+- Earn first USDC rebate
+- Validate 30 paper signals manually
+- Track signal accuracy (Claude win rate)
+- Only execute live after 67%+ win rate proven
+
+## Phase 7 — Scale: NOT STARTED
+- Auto-execute on high confidence signals
+- Kelly position sizer
+- Telegram alerts
 - Kalshi cross-platform arbitrage
+- Scale to $500 deployed
 - Full autonomous trading
 
 ## Infrastructure
@@ -48,7 +64,7 @@
 | GitHub | ✅ Live | github.com/dsovan2004-beep/polybot-app |
 | Cloudflare | ✅ Live | polybot-app.pages.dev |
 | Supabase | ✅ Live | qvrvfajbxkaqlsaiorbu.supabase.co |
-| AI | ✅ Live | Claude Sonnet (ANTHROPIC_API_KEY) |
+| AI | ✅ Live | Claude Haiku (ANTHROPIC_API_KEY) — 20x cheaper |
 | Data Feeds | ✅ Live | Binance WS (free), Polymarket WS (free) |
-| Railway | ⬜ Not deployed | Sprint 5 target (feed.ts 24/7) |
-| Feed | 🔄 Local | Running on Mac (temporary) |
+| Feed | ✅ Running | Mac terminal (feed.ts with self-test) |
+| Signals | ✅ Flowing | 50 signals in first session |

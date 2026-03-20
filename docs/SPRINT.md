@@ -71,20 +71,48 @@ Cloudflare Workers are STATELESS — they spin up for a request and die. Cannot 
 
 ---
 
-## Sprint 5: First Real Money — IN PROGRESS 🔄
-**Goal:** Deploy feed 24/7, fund wallet, place first MAKER order, earn first USDC rebate
+## Sprint 5: Signal Intelligence — COMPLETE ✅
+**Dates:** Mar 19
+**Goal:** Get Claude signals flowing end-to-end, dashboard showing real votes
 
-| Task | Status |
-|------|--------|
-| Deploy feed.ts to Railway (24/7, no Mac needed) | ⬜ NOT STARTED |
-| Set up Polymarket wallet + private key | ⬜ NOT STARTED |
-| Fund wallet with $200 USDC | ⬜ NOT STARTED |
-| Get Polymarket API key | ⬜ NOT STARTED |
-| Place first MAKER order on BTC 5-min market | ⬜ NOT STARTED |
-| Earn first USDC rebate | ⬜ NOT STARTED |
-| Validate 30 paper signals before scaling | ⬜ NOT STARTED |
+| Deliverable | Status |
+|-------------|--------|
+| Sports filter expanded (3 rounds: NBA, NFL, UFC, golf, baseball, Masters, World Series, Spread, Commodores, Bulldogs, NCAA, PGA, Stanley Cup, championship, ATS) | ✅ COMPLETE |
+| Whale Watch UUIDs fixed → shows market titles | ✅ COMPLETE |
+| Claude analysis moved inline in feed.ts (bypasses Cloudflare edge timeout) | ✅ COMPLETE |
+| Category gate removed (was blocking 90% of markets) | ✅ COMPLETE |
+| API key workspace mismatch fixed | ✅ COMPLETE |
+| 15-second timeout on Claude SDK calls | ✅ COMPLETE |
+| Startup self-test added to feed.ts (verifies Supabase + Claude before trading) | ✅ COMPLETE |
+| RLS policy fixed (signals table now accepts inserts) | ✅ COMPLETE |
+| Switched feed.ts to SUPABASE_SERVICE_ROLE_KEY | ✅ COMPLETE |
+| Signal History section live on dashboard | ✅ COMPLETE |
+
+**Key Milestone — Sprint 5:**
+- 50 real signals generated in one session ✅
+- First real signal: Iranian regime NO at 85% confidence ✅
+- Full pipeline working end-to-end: Polymarket WS → feed.ts (Mac) → Claude → Supabase → Dashboard ✅
+
+**Key Discovery — Sprint 5:**
+Supabase anon key is read-only when RLS is enabled. Feed script must use SUPABASE_SERVICE_ROLE_KEY with `auth: { autoRefreshToken: false, persistSession: false }` to bypass RLS and write signals. Claude analysis must run inline in feed.ts on Mac — Cloudflare Workers timeout at 8 seconds, not enough for Claude API calls.
 
 ---
 
-## Sprint 6: Scale + Diversify (Planned)
-**Goal:** Scale to $500+, Kelly sizer, Telegram alerts, Kalshi integration
+## Sprint 6: First Real Money — IN PROGRESS 🔄
+**Goal:** Fund Kalshi account, wire trading API, place first MAKER order, validate signal accuracy
+
+| Task | Status |
+|------|--------|
+| Fund Kalshi account ($200 via debit card) | ⬜ NOT STARTED |
+| Get Kalshi API key from Settings | ⬜ NOT STARTED |
+| Wire Kalshi trading API to PolyBot | ⬜ NOT STARTED |
+| Place first MAKER order on BTC 5-min market | ⬜ NOT STARTED |
+| Earn first USDC rebate | ⬜ NOT STARTED |
+| Validate 30 paper signals manually | ⬜ NOT STARTED |
+| Track signal accuracy (Claude win rate) | ⬜ NOT STARTED |
+| Only execute live after 67%+ win rate proven | ⬜ NOT STARTED |
+
+---
+
+## Sprint 7: Scale + Diversify (Planned)
+**Goal:** Scale to $500+, Kelly sizer, Telegram alerts, Kalshi cross-platform arb

@@ -12,10 +12,15 @@
 
 ## Architecture Rules
 9. Cloudflare Workers = stateless, no persistent WebSocket connections
-10. Feed script (feed.ts) must run on external server (Railway)
-11. Dashboard reads from Supabase (not direct WS)
-12. Railway free tier = best option for feed hosting (500 hrs/month)
-13. Data flow: Railway feed.ts → Supabase → Dashboard
+10. Cloudflare Workers timeout at 8 seconds — NOT enough for Claude API calls
+11. Feed script (feed.ts) runs on Mac terminal (or future persistent server)
+12. Claude analysis must run INLINE in feed.ts — never in Cloudflare edge functions
+13. Dashboard reads from Supabase (not direct WS)
+14. Data flow: Mac feed.ts → Supabase → Dashboard
+15. Always use SUPABASE_SERVICE_ROLE_KEY for writes (anon key = read only)
+16. Service role client needs: `auth: { autoRefreshToken: false, persistSession: false }`
+17. RLS policies must allow service role inserts on signals table
+18. Always run startup self-test before trading (verifies Supabase + Claude)
 
 ## BTC 5-Min Strategy Rules
 14. Binance liquidation feed is FREE and public — no API key needed
@@ -61,11 +66,27 @@
 - Never risk more than 10% per trade
 - Kill switch at -20% in 24 hours
 
+## Signal Validation Rules (Sprint 5)
+- 50 signals generated in first live session ✅
+- First signal with edge: Iranian regime NO at 85% confidence
+- Validate 30 signals manually before trusting
+- Track: was Claude right or wrong on each signal
+- Only go live after 67%+ manual win rate proven
+- Signal History tab shows all historical signals on dashboard
+
+## Cost Optimization
+- Claude Haiku = 20x cheaper than Sonnet
+- ~$0.00015 per analysis vs ~$0.003
+- $10 credits = ~66,000 analyses = years of runway
+- Always use Haiku for signal generation
+- Only use Sonnet for complex reasoning tasks
+
 ## Strategy Status (Validated)
 | Strategy | Status |
 |----------|--------|
 | BTC Liquidation Bounce | VALIDATED ✅ |
 | Maker/LP Bot | VALIDATED ✅ |
 | AI News Lag | VALIDATED ✅ |
+| Claude Signal Pipeline | VALIDATED ✅ |
 | Pure Arbitrage | DEAD ❌ |
 | REST Polling | DEAD ❌ |

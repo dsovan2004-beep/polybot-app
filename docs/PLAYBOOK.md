@@ -6,22 +6,25 @@
 Cloudflare Workers are request/response only. Cannot hold open WebSocket connections. They spin up, handle one request, and die.
 
 ### Solution — Split Architecture
-- **feed.ts** = data collector (runs on Railway 24/7)
+- **feed.ts** = data collector + Claude analyst (runs on Mac terminal)
 - **Supabase** = data store (always on, free tier)
 - **Dashboard** = display layer (Cloudflare Pages, static + edge)
 - **API routes** = data retrieval (Cloudflare Workers, stateless)
 
-### Data Flow
+### Current Working Pipeline (Sprint 5 validated)
 ```
-Railway (feed.ts)
+Mac terminal (feed.ts)
   → connects Polymarket WebSocket
-  → filters trades ($500+, no sports, 0.02-0.98)
+  → filters trades ($10+, no sports, 0.02-0.98)
   → saves to Supabase (markets + whale_activity)
+  → calls Claude Haiku INLINE for each new market
+  → saves signal to Supabase (signals table)
 
 Dashboard (bot/page.tsx)
   → polls /api/markets every 30 seconds
-  → calls /api/swarm for each new market
-  → displays signals + whale activity
+  → reads signals from Supabase (persisted by feed.ts)
+  → displays YES/NO/NO_TRADE badge + confidence %
+  → shows Signal History section
 ```
 
 ---
@@ -87,12 +90,30 @@ Subscription format:
 ```
 
 ### Feed Script Filters
-- Minimum trade size: $500 USD
+- Minimum trade size: $10 USD
 - Skip price < 0.02 or > 0.98 (near resolution)
-- Skip sports: NBA, NFL, UFC, football, basketball, soccer, MLB, NHL, tennis, boxing, MMA
-- Re-analyze markets every 8 hours
+- Skip sports (expanded keyword list — Sprint 5):
+  NBA, NFL, UFC, football, basketball, soccer, MLB, NHL, tennis, boxing, MMA,
+  FC, vs., O/U, Open, UEFA, Premier, LaLiga, Bundesliga, Serie A, Ligue 1, MLS,
+  Vallecano, Porto, Stuttgart, Samsunspor, Forest, Madrid, Tagger, Seidel,
+  Spread, Commodores, Bulldogs, NCAA, PGA, golf, baseball, Masters, World Series,
+  Astros, Yankees, Dodgers, tournament, Stanley Cup, championship, ATS, covers
+- Dedup: never analyze same market twice per session
 - All qualifying trades → markets table
-- All $500+ trades → whale_activity table
+- All qualifying trades → whale_activity table
+- Each new market → Claude Haiku analysis → signals table
+
+### Signal Rules (validated Sprint 5)
+- Minimum confidence: 67%
+- Minimum price gap: 10% (abs(probability - market_price) > 0.10)
+- NO_TRADE if below either threshold
+- Strategy tagged: news_lag / sentiment_fade / logical_arb / maker / unknown
+- Signal saved to Supabase regardless of vote (for tracking)
+- 50 signals generated in first live session ✅
+
+### Validation Process
+- Week 1: Run feed 2-3 hours/day, manually check each signal, record market + Claude vote + actual outcome. Target: 30 validated signals.
+- Week 2: Calculate win rate. If 67%+ → go live on Kalshi. If below → tune prompts and retest.
 
 ---
 
@@ -102,8 +123,8 @@ Subscription format:
 Maker rebates on BTC 5-min markets. No prediction needed. Place orders both sides. Collect daily USDC.
 
 ### Timeline
-- **Week 1:** Feed running on Railway, 30 paper signals validated
-- **Week 2:** Fund Polymarket $200, get API key
+- **Week 1:** Feed running on Mac, 30 paper signals validated ← YOU ARE HERE
+- **Week 2:** Fund Kalshi $200, get API key
 - **Week 3:** Place first MAKER order
 - **Week 4:** First USDC rebate earned
 - **Month 2:** Scale to $500-1K deployed
