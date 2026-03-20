@@ -214,7 +214,7 @@ export async function getBalance(
 }
 
 /**
- * Search Kalshi markets by keyword.
+ * Search Kalshi markets by ticker(s).
  */
 export async function getMarkets(
   keyword: string,
@@ -224,11 +224,57 @@ export async function getMarkets(
   const encoded = encodeURIComponent(keyword);
   const data = await kalshiFetch<{ markets: KalshiMarket[] }>({
     method: "GET",
-    path: `/markets?status=open&limit=20&cursor=&series_ticker=&event_ticker=&with_nested_markets=false&tickers=${encoded}`,
+    path: `/markets?status=open&limit=20&tickers=${encoded}`,
     apiKey,
     privateKey,
   });
   return data.markets ?? [];
+}
+
+/**
+ * Get a single market by exact ticker.
+ * Returns null if not found.
+ */
+export async function getMarketByTicker(
+  ticker: string,
+  apiKey: string,
+  privateKey: string
+): Promise<KalshiMarket | null> {
+  try {
+    const data = await kalshiFetch<KalshiMarket>({
+      method: "GET",
+      path: `/markets/${encodeURIComponent(ticker)}`,
+      apiKey,
+      privateKey,
+    });
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Verify Kalshi auth is working by fetching balance.
+ * Returns { ok, balance, error } for diagnostics.
+ */
+export async function testAuth(
+  apiKey: string,
+  privateKey: string
+): Promise<{ ok: boolean; balance?: number; error?: string }> {
+  try {
+    const data = await kalshiFetch<{ balance: number }>({
+      method: "GET",
+      path: "/portfolio/balance",
+      apiKey,
+      privateKey,
+    });
+    return { ok: true, balance: data.balance / 100 };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 /**
