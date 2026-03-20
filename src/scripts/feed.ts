@@ -7,6 +7,7 @@
 // ============================================================================
 
 import { createClient } from "@supabase/supabase-js";
+import Anthropic from "@anthropic-ai/sdk";
 import WebSocket from "ws";
 import * as dotenv from "dotenv";
 import * as path from "path";
@@ -28,6 +29,15 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+if (!ANTHROPIC_API_KEY) {
+  console.warn("⚠️  ANTHROPIC_API_KEY not found in .env.local — Claude analysis disabled");
+  console.warn("   Add ANTHROPIC_API_KEY=sk-ant-... to your .env.local file");
+} else {
+  console.log(`✅ ANTHROPIC_API_KEY loaded (${ANTHROPIC_API_KEY.slice(0, 12)}...)`);
+}
+const anthropic = ANTHROPIC_API_KEY ? new Anthropic({ apiKey: ANTHROPIC_API_KEY }) : null;
+
 const POLYMARKET_WS = "wss://ws-live-data.polymarket.com";
 const MIN_USD = 10;
 const PRICE_MIN = 0.02;
@@ -43,6 +53,14 @@ const SPORTS_KEYWORDS = [
   "laliga", "bundesliga", "serie a", "ligue 1", "mls",
   "vallecano", "porto", "stuttgart", "samsunspor",
   "forest", "madrid", "tagger", "seidel",
+  // Sprint 5b — more sports/betting keywords
+  "spread:", "commodores", "bulldogs",
+  "ncaa", "spread", "covers", "ats",
+  // Sprint 5c — additional sports
+  "masters", "world series", "astros",
+  "yankees", "dodgers", "tournament",
+  "pga", "golf", "baseball",
+  "stanley cup", "championship",
 ];
 
 // ---------------------------------------------------------------------------
@@ -60,7 +78,7 @@ function printStats() {
   const mins = Math.floor(uptime / 60);
   const secs = uptime % 60;
   console.log(
-    `\n📊 Stats — uptime ${mins}m${secs}s | received: ${totalReceived} | filtered: ${totalFiltered} | saved: ${totalSaved} | whales: ${totalWhales}\n`
+    `\n📊 Stats — uptime ${mins}m${secs}s | received: ${totalReceived} | filtered: ${totalFiltered} | saved: ${totalSaved} | whales: ${totalWhales} | signals: ${totalSignals}\n`
   );
 }
 
@@ -135,6 +153,143 @@ async function saveWhale(
 
   if (error) {
     console.error("  ❌ Whale save failed:", error.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Claude AI Signal — inline analysis (bypasses Cloudflare timeout)
+// ---------------------------------------------------------------------------
+
+const CLAUDE_MODEL = "claude-sonnet-4-20250514";
+const MIN_CONFIDENCE = 67;
+const MIN_PRICE_GAP = 0.10;
+
+const SIGNAL_SYSTEM_PROMPT = `You are a prediction market analyst for PolyBot, an AI-powered Polymarket trading tool. You analyze markets using probability theory, news sentiment, and risk assessment. You are calibrated, data-driven, and skeptical of narratives.
+
+Analyze this market. Output ONLY valid JSON:
+{
+  "vote": "YES" or "NO" or "NO_TRADE",
+  "probability": 0.00 to 1.00,
+  "confidence": 0 to 100,
+  "reason": "one sentence max",
+  "strategy": "news_lag" or "sentiment_fade" or "logical_arb" or "maker" or "unknown"
+}
+
+Rules:
+- Only vote YES or NO if your confidence is >= 67
+- Only vote YES or NO if the price gap is >= 10% (abs(your probability - market price) > 0.10)
+- Otherwise vote NO_TRADE
+- Be calibrated — don't be overconfident
+- Consider base rates, recent news, and market efficiency`;
+
+// Track which markets we've already analyzed (avoid duplicate Claude calls)
+const analyzedMarkets = new Set<string>();
+let totalSignals = 0;
+
+interface ClaudeSignal {
+  vote: "YES" | "NO" | "NO_TRADE";
+  probability: number;
+  confidence: number;
+  reason: string;
+  strategy: string;
+}
+
+async function analyzeMarket(
+  marketId: string,
+  title: string,
+  category: string,
+  price: number,
+  volume: number
+): Promise<void> {
+  // Debug: log every call so we can see what's happening
+  console.log(`  🧠 analyzeMarket called | id=${marketId.slice(0, 8)} | cat=${category} | claude=${anthropic ? "ON" : "OFF"}`);
+
+  if (!anthropic) {
+    console.log("  ⏭️  Skipped: no ANTHROPIC_API_KEY");
+    return;
+  }
+  if (analyzedMarkets.has(marketId)) {
+    console.log("  ⏭️  Skipped: already analyzed");
+    return;
+  }
+
+  analyzedMarkets.add(marketId);
+  console.log(`  🔄 Calling Claude for: ${title.slice(0, 50)}...`);
+
+  try {
+    const userPrompt = `Market: ${title}
+Category: ${category}
+Current YES price: ${price} (implied probability: ${(price * 100).toFixed(1)}%)
+24h Volume: $${volume.toLocaleString()}
+
+What is your analysis?`;
+
+    const res = await anthropic.messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: 256,
+      system: SIGNAL_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: userPrompt }],
+      temperature: 0.3,
+    });
+
+    const content = res.content[0]?.type === "text" ? res.content[0].text : "";
+    console.log(`  📝 Claude raw response: ${content.slice(0, 120)}...`);
+
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.error("  ⚠️  No JSON in Claude response");
+      return;
+    }
+
+    const parsed: ClaudeSignal = JSON.parse(jsonMatch[0]);
+
+    // Normalize vote
+    const vote = String(parsed.vote).toUpperCase();
+    if (!["YES", "NO", "NO_TRADE"].includes(vote)) {
+      console.error(`  ⚠️  Invalid vote from Claude: ${parsed.vote}`);
+      return;
+    }
+
+    const confidence = Math.max(0, Math.min(100, Math.round(Number(parsed.confidence))));
+    const probability = Math.max(0, Math.min(1, Number(parsed.probability)));
+    const priceGap = Math.abs(probability - price);
+
+    // Apply rules: 67% confidence and 10% price gap
+    const finalVote =
+      confidence < MIN_CONFIDENCE || priceGap < MIN_PRICE_GAP ? "NO_TRADE" : vote;
+
+    const validStrategies = ["news_lag", "sentiment_fade", "logical_arb", "maker", "unknown"];
+    const strategy = validStrategies.includes(parsed.strategy) ? parsed.strategy : "unknown";
+
+    // Save signal to Supabase signals table
+    const { error } = await supabase.from("signals").insert({
+      market_id: marketId,
+      strategy,
+      claude_vote: finalVote,
+      gpt4o_vote: null,
+      gemini_vote: null,
+      consensus: finalVote,
+      confidence,
+      ai_probability: probability,
+      market_price: price,
+      price_gap: priceGap,
+      reasoning: String(parsed.reason ?? ""),
+      acted_on: false,
+    });
+
+    if (error) {
+      console.error("  ❌ Signal save failed:", error.message);
+      return;
+    }
+
+    totalSignals++;
+    const voteColor = finalVote === "YES" ? "🟢" : finalVote === "NO" ? "🔴" : "⚪";
+    console.log(
+      `  ${voteColor} SIGNAL: ${finalVote} | conf ${confidence}% | gap ${(priceGap * 100).toFixed(1)}% | ${parsed.reason?.slice(0, 50)}`
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  ⚠️  Claude analysis failed: ${msg}`);
   }
 }
 
@@ -231,6 +386,9 @@ async function processTrade(trade: ParsedTrade): Promise<void> {
   totalWhales++;
 
   console.log(`  ✅ Saved to Supabase (market: ${marketId.slice(0, 8)}...)`);
+
+  // Analyze with Claude (runs inline — no Cloudflare timeout)
+  await analyzeMarket(marketId, trade.title, category, trade.price, trade.usdAmount);
 }
 
 // ---------------------------------------------------------------------------
@@ -243,7 +401,8 @@ function connect(): void {
   console.log(`   Supabase: ${SUPABASE_URL}`);
   console.log(`   Min USD: $${MIN_USD}`);
   console.log(`   Price range: ${PRICE_MIN}–${PRICE_MAX}`);
-  console.log(`   Sports filter: ON\n`);
+  console.log(`   Sports filter: ON`);
+  console.log(`   Claude analysis: ${anthropic ? "ON" : "OFF (no ANTHROPIC_API_KEY)"}\n`);
 
   const ws = new WebSocket(POLYMARKET_WS);
 
