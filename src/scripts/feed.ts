@@ -1,18 +1,18 @@
 #!/usr/bin/env npx ts-node
 // ============================================================================
-// PolyBot — Standalone Polymarket Feed Script
-// Runs on your Mac, connects to Polymarket WebSocket, saves to Supabase
+// PolyBot — Kalshi Feed Script (Sprint 7)
+// Runs on your Mac, polls Kalshi REST API, analyzes with Claude, saves to Supabase
 // Usage: npx ts-node src/scripts/feed.ts
-// Requires: .env.local with NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_ANON_KEY
+// Requires: .env.local with Supabase + Anthropic + Kalshi keys
 // ============================================================================
 
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
-import WebSocket from "ws";
 import * as dotenv from "dotenv";
 import * as path from "path";
+import * as crypto from "crypto";
 
-// Telegram alert helper (inline for Mac script — avoids edge-only import)
+// Telegram alert helper (inline — avoids edge-only import)
 async function sendTelegramMessage(text: string): Promise<boolean> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
@@ -54,20 +54,16 @@ const useServiceRole = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
 if (useServiceRole) {
   console.log("✅ Using SUPABASE_SERVICE_ROLE_KEY (bypasses RLS)");
 } else {
-  console.warn("⚠️  Using anon key — RLS may block signal writes. Add SUPABASE_SERVICE_ROLE_KEY to .env.local");
+  console.warn("⚠️  Using anon key — RLS may block signal writes");
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
-  auth: {
-    autoRefreshToken: false,
-    persistSession: false,
-  },
+  auth: { autoRefreshToken: false, persistSession: false },
 });
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 if (!ANTHROPIC_API_KEY) {
-  console.warn("⚠️  ANTHROPIC_API_KEY not found in .env.local — Claude analysis disabled");
-  console.warn("   Add ANTHROPIC_API_KEY=sk-ant-... to your .env.local file");
+  console.warn("⚠️  ANTHROPIC_API_KEY not found — Claude analysis disabled");
 } else {
   console.log(`✅ ANTHROPIC_API_KEY loaded (${ANTHROPIC_API_KEY.slice(0, 12)}...)`);
 }
@@ -75,30 +71,37 @@ const anthropic = ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: ANTHROPIC_API_KEY, timeout: 15_000 })
   : null;
 
-const POLYMARKET_WS = "wss://ws-live-data.polymarket.com";
-const MIN_USD = 10;
+// Kalshi config
+const KALSHI_HOST = "https://api.elections.kalshi.com";
+const KALSHI_API_PREFIX = "/trade-api/v2";
+const KALSHI_API_KEY = process.env.KALSHI_API_KEY;
+const KALSHI_PRIVATE_KEY = process.env.KALSHI_PRIVATE_KEY;
+
+if (!KALSHI_API_KEY || !KALSHI_PRIVATE_KEY) {
+  console.error("Missing KALSHI_API_KEY or KALSHI_PRIVATE_KEY in .env.local");
+  process.exit(1);
+}
+console.log(`✅ KALSHI_API_KEY loaded (${KALSHI_API_KEY.slice(0, 8)}...)`);
+
 const PRICE_MIN = 0.02;
 const PRICE_MAX = 0.98;
+const POLL_INTERVAL_MS = 30_000; // 30 seconds
 
 const SPORTS_KEYWORDS = [
   "nba", "nfl", "ufc", "football", "basketball", "soccer",
   "mlb", "nhl", "tennis", "boxing", "mma", "premier league",
   "champions league", "world cup", "super bowl", "playoff",
   "grand slam", "olympics",
-  // Sprint 5 — strengthened sports filter
   "fc", "vs.", "o/u", "open", "uefa", "premier",
   "laliga", "bundesliga", "serie a", "ligue 1", "mls",
   "vallecano", "porto", "stuttgart", "samsunspor",
   "forest", "madrid", "tagger", "seidel",
-  // Sprint 5b — more sports/betting keywords
   "spread:", "commodores", "bulldogs",
   "ncaa", "spread", "covers", "ats",
-  // Sprint 5c — additional sports
   "masters", "world series", "astros",
   "yankees", "dodgers", "tournament",
   "pga", "golf", "baseball",
   "stanley cup", "championship",
-  // Sprint 6 — cricket, rugby, motorsport, combat sports
   "t20", "cricket", "test match",
   "innings", "wicket", "odi", "ipl",
   "rugby", "ashes", "bowled", "batting",
@@ -106,11 +109,86 @@ const SPORTS_KEYWORDS = [
   "nascar", "racing", "grand prix",
   "cycling", "tour de france",
   "wrestling", "wwe", "ufc fight",
-  // Sprint 7 — esports
   "esports", "esport", "counter-strike", "cs2",
   "dota", "valorant", "overwatch", "league of legends",
   "lol", "game winner", "map 2", "map 3",
 ];
+
+// ---------------------------------------------------------------------------
+// Kalshi RSA-PSS Signing (Node.js native crypto)
+// ---------------------------------------------------------------------------
+
+function signRequest(
+  privateKeyPem: string,
+  timestampMs: string,
+  method: string,
+  fullPath: string
+): string {
+  const pathOnly = fullPath.split("?")[0];
+  const message = `${timestampMs}${method}${pathOnly}`;
+  const normalized = privateKeyPem.replace(/\\n/g, "\n");
+  const sign = crypto.createSign("RSA-SHA256");
+  sign.update(message);
+  sign.end();
+  return sign.sign(
+    { key: normalized, padding: crypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: 32 },
+    "base64"
+  );
+}
+
+async function kalshiFetch<T>(
+  method: string,
+  apiPath: string,
+  body?: unknown
+): Promise<T> {
+  const fullPath = `${KALSHI_API_PREFIX}${apiPath}`;
+  const timestampMs = String(Date.now());
+  const signature = signRequest(KALSHI_PRIVATE_KEY!, timestampMs, method, fullPath);
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "KALSHI-ACCESS-KEY": KALSHI_API_KEY!,
+    "KALSHI-ACCESS-SIGNATURE": signature,
+    "KALSHI-ACCESS-TIMESTAMP": timestampMs,
+  };
+
+  const url = `${KALSHI_HOST}${fullPath}`;
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Kalshi ${method} ${fullPath} → ${res.status}: ${errText.slice(0, 300)}`);
+  }
+
+  return res.json() as Promise<T>;
+}
+
+// ---------------------------------------------------------------------------
+// Kalshi types
+// ---------------------------------------------------------------------------
+
+interface KalshiMarketFromAPI {
+  ticker: string;
+  title: string;
+  status: string;
+  yes_bid: number;
+  yes_ask: number;
+  no_bid: number;
+  no_ask: number;
+  volume: number;
+  volume_24h?: number;
+  event_ticker?: string;
+}
+
+interface KalshiEvent {
+  event_ticker: string;
+  title: string;
+  markets?: KalshiMarketFromAPI[];
+}
 
 // ---------------------------------------------------------------------------
 // Kill Switch
@@ -132,11 +210,9 @@ async function checkKillSwitch(): Promise<boolean> {
 
     if (active && !killSwitchActive) {
       console.log("\n🔴 KILL SWITCH ACTIVE — halted");
-      console.log("   All Claude analysis stopped. No new signals will be generated.");
-      console.log("   Deactivate via Supabase dashboard to resume.\n");
     }
     if (!active && killSwitchActive) {
-      console.log("\n🟢 Kill switch deactivated — resuming normal operation\n");
+      console.log("\n🟢 Kill switch deactivated — resuming\n");
     }
 
     killSwitchActive = active;
@@ -146,17 +222,10 @@ async function checkKillSwitch(): Promise<boolean> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Auto Kill Switch — triggers at -20% drawdown in 24 hours
-// ---------------------------------------------------------------------------
-
 async function checkAutoKillSwitch(): Promise<void> {
-  if (killSwitchActive) return; // already killed
-
+  if (killSwitchActive) return;
   try {
     const today = new Date().toISOString().slice(0, 10);
-
-    // Get today's performance row (starting_balance + pnl_day)
     const { data: perf } = await supabase
       .from("performance")
       .select("starting_balance, pnl_day")
@@ -164,41 +233,18 @@ async function checkAutoKillSwitch(): Promise<void> {
       .single();
 
     if (!perf || !perf.starting_balance || perf.starting_balance <= 0) return;
-
     const pnlDay = perf.pnl_day ?? 0;
     const drawdownPct = (pnlDay / perf.starting_balance) * 100;
 
     if (drawdownPct <= -20) {
       console.log(`\n🔴 AUTO KILL: -20% drawdown (${drawdownPct.toFixed(1)}%)`);
-      console.log("   Activating kill switch automatically...\n");
-
-      // Set kill_switch = true in Supabase
-      await supabase
-        .from("performance")
-        .upsert(
-          {
-            date: today,
-            kill_switch: true,
-            drawdown_pct: Math.abs(drawdownPct) / 100,
-          },
-          { onConflict: "date" }
-        );
-
+      await supabase.from("performance").upsert(
+        { date: today, kill_switch: true, drawdown_pct: Math.abs(drawdownPct) / 100 },
+        { onConflict: "date" }
+      );
       killSwitchActive = true;
-
-      // Send Telegram alert
       await sendTelegramMessage(
-        [
-          `*AUTO KILL SWITCH TRIGGERED*`,
-          ``,
-          `Drawdown: ${drawdownPct.toFixed(1)}% in 24 hours`,
-          `Starting balance: $${perf.starting_balance.toFixed(2)}`,
-          `P&L today: $${pnlDay.toFixed(2)}`,
-          ``,
-          `Trading halted automatically.`,
-          `Check dashboard immediately.`,
-          `polybot-app.pages.dev/bot`,
-        ].join("\n")
+        `*AUTO KILL SWITCH TRIGGERED*\nDrawdown: ${drawdownPct.toFixed(1)}%\nTrading halted.`
       );
     }
   } catch (err) {
@@ -211,10 +257,11 @@ async function checkAutoKillSwitch(): Promise<void> {
 // Stats
 // ---------------------------------------------------------------------------
 
-let totalReceived = 0;
+let totalPolled = 0;
+let totalMarketsFound = 0;
 let totalFiltered = 0;
 let totalSaved = 0;
-let totalWhales = 0;
+let totalSignals = 0;
 let startTime = Date.now();
 
 function printStats() {
@@ -222,7 +269,7 @@ function printStats() {
   const mins = Math.floor(uptime / 60);
   const secs = uptime % 60;
   console.log(
-    `\n📊 Stats — uptime ${mins}m${secs}s | received: ${totalReceived} | filtered: ${totalFiltered} | saved: ${totalSaved} | whales: ${totalWhales} | signals: ${totalSignals}\n`
+    `\n📊 Stats — uptime ${mins}m${secs}s | polls: ${totalPolled} | markets: ${totalMarketsFound} | filtered: ${totalFiltered} | saved: ${totalSaved} | signals: ${totalSignals}\n`
   );
 }
 
@@ -252,21 +299,18 @@ function categorize(title: string): string {
 // Supabase saves
 // ---------------------------------------------------------------------------
 
-async function saveMarket(trade: {
-  conditionId: string;
-  title: string;
-  price: number;
-  usdAmount: number;
-}): Promise<string | null> {
+async function saveMarket(m: KalshiMarketFromAPI): Promise<string | null> {
+  const yesPrice = m.yes_bid > 0 ? m.yes_bid / 100 : 0.5;
   const { data, error } = await supabase
     .from("markets")
     .upsert(
       {
-        polymarket_id: trade.conditionId,
-        title: trade.title,
-        category: categorize(trade.title),
-        current_price: trade.price,
-        volume_24h: trade.usdAmount,
+        polymarket_id: m.ticker, // use Kalshi ticker as polymarket_id
+        kalshi_ticker: m.ticker,
+        title: m.title,
+        category: categorize(m.title),
+        current_price: yesPrice,
+        volume_24h: m.volume_24h ?? m.volume ?? 0,
         status: "active",
       },
       { onConflict: "polymarket_id" }
@@ -281,25 +325,6 @@ async function saveMarket(trade: {
   return data?.id ?? null;
 }
 
-async function saveWhale(
-  marketId: string,
-  side: string,
-  size: number,
-  price: number
-): Promise<void> {
-  const { error } = await supabase.from("whale_activity").insert({
-    market_id: marketId,
-    wallet_address: "polymarket-ws",
-    direction: side.toLowerCase(),
-    trade_size_usd: size,
-    price_at_trade: price,
-  });
-
-  if (error) {
-    console.error("  ❌ Whale save failed:", error.message);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Claude AI Signal — inline analysis (bypasses Cloudflare timeout)
 // ---------------------------------------------------------------------------
@@ -308,9 +333,7 @@ const CLAUDE_MODEL = "claude-sonnet-4-20250514";
 const MIN_CONFIDENCE = 67;
 const MIN_PRICE_GAP = 0.10;
 
-const SIGNAL_SYSTEM_PROMPT = `You are a prediction market analyst for PolyBot, an AI-powered Polymarket trading tool. You analyze markets using probability theory, news sentiment, and risk assessment. You are calibrated, data-driven, and skeptical of narratives.
-
-Analyze this market. Output ONLY valid JSON:
+const SIGNAL_SYSTEM_PROMPT = `You are a prediction market analyst for PolyBot. Analyze this Kalshi market. Output ONLY valid JSON:
 {
   "vote": "YES" or "NO" or "NO_TRADE",
   "probability": 0.00 to 1.00,
@@ -326,9 +349,7 @@ Rules:
 - Be calibrated — don't be overconfident
 - Consider base rates, recent news, and market efficiency`;
 
-// Track which markets we've already analyzed (avoid duplicate Claude calls)
 const analyzedMarkets = new Set<string>();
-let totalSignals = 0;
 
 interface ClaudeSignal {
   vote: "YES" | "NO" | "NO_TRADE";
@@ -340,35 +361,24 @@ interface ClaudeSignal {
 
 async function analyzeMarket(
   marketId: string,
+  kalshiTicker: string,
   title: string,
   category: string,
-  price: number,
+  yesPrice: number,
   volume: number
 ): Promise<void> {
-  // Debug: log every call so we can see what's happening
-  console.log(`  🧠 analyzeMarket called | id=${marketId.slice(0, 8)} | cat=${category} | claude=${anthropic ? "ON" : "OFF"}`);
+  if (killSwitchActive || !anthropic) return;
+  if (analyzedMarkets.has(kalshiTicker)) return;
 
-  if (killSwitchActive) {
-    console.log("  🔴 Skipped: kill switch active");
-    return;
-  }
-  if (!anthropic) {
-    console.log("  ⏭️  Skipped: no ANTHROPIC_API_KEY");
-    return;
-  }
-  if (analyzedMarkets.has(marketId)) {
-    console.log("  ⏭️  Skipped: already analyzed");
-    return;
-  }
-
-  analyzedMarkets.add(marketId);
-  console.log(`  🔄 Calling Claude for: ${title.slice(0, 50)}...`);
+  analyzedMarkets.add(kalshiTicker);
+  console.log(`  🔄 Claude → ${title.slice(0, 60)}...`);
 
   try {
     const userPrompt = `Market: ${title}
+Kalshi Ticker: ${kalshiTicker}
 Category: ${category}
-Current YES price: ${price} (implied probability: ${(price * 100).toFixed(1)}%)
-24h Volume: $${volume.toLocaleString()}
+Current YES price: ${yesPrice.toFixed(2)} (implied probability: ${(yesPrice * 100).toFixed(1)}%)
+Volume: $${volume.toLocaleString()}
 
 What is your analysis?`;
 
@@ -381,11 +391,8 @@ What is your analysis?`;
       temperature: 0.3,
     });
     const claudeMs = Date.now() - claudeStart;
-    console.log(`  ⏱️  Claude responded in ${claudeMs}ms`);
 
     const content = res.content[0]?.type === "text" ? res.content[0].text : "";
-    console.log(`  📝 Claude raw response: ${content.slice(0, 120)}...`);
-
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       console.error("  ⚠️  No JSON in Claude response");
@@ -393,26 +400,19 @@ What is your analysis?`;
     }
 
     const parsed: ClaudeSignal = JSON.parse(jsonMatch[0]);
-
-    // Normalize vote
     const vote = String(parsed.vote).toUpperCase();
-    if (!["YES", "NO", "NO_TRADE"].includes(vote)) {
-      console.error(`  ⚠️  Invalid vote from Claude: ${parsed.vote}`);
-      return;
-    }
+    if (!["YES", "NO", "NO_TRADE"].includes(vote)) return;
 
     const confidence = Math.max(0, Math.min(100, Math.round(Number(parsed.confidence))));
     const probability = Math.max(0, Math.min(1, Number(parsed.probability)));
-    const priceGap = Math.abs(probability - price);
+    const priceGap = Math.abs(probability - yesPrice);
 
-    // Apply rules: 67% confidence and 10% price gap
     const finalVote =
       confidence < MIN_CONFIDENCE || priceGap < MIN_PRICE_GAP ? "NO_TRADE" : vote;
 
     const validStrategies = ["news_lag", "sentiment_fade", "logical_arb", "maker", "unknown"];
     const strategy = validStrategies.includes(parsed.strategy) ? parsed.strategy : "unknown";
 
-    // Save signal to Supabase signals table
     const signalPayload = {
       market_id: marketId,
       strategy,
@@ -422,43 +422,35 @@ What is your analysis?`;
       consensus: finalVote,
       confidence,
       ai_probability: probability,
-      market_price: price,
+      market_price: yesPrice,
       price_gap: priceGap,
       reasoning: String(parsed.reason ?? ""),
       acted_on: false,
     };
-    console.log(`  💾 Saving signal: ${finalVote} | conf=${confidence} | gap=${(priceGap * 100).toFixed(1)}%`);
 
-    const { data: savedSignal, error } = await supabase
-      .from("signals")
-      .insert(signalPayload)
-      .select("id")
-      .single();
-
+    const { error } = await supabase.from("signals").insert(signalPayload);
     if (error) {
       console.error("  ❌ Signal save failed:", error.message);
-      console.error("  ❌ Payload:", JSON.stringify(signalPayload));
       return;
     }
-    console.log(`  💾 Signal saved to Supabase (id: ${savedSignal?.id?.slice(0, 8)}...)`);
 
     totalSignals++;
     const voteColor = finalVote === "YES" ? "🟢" : finalVote === "NO" ? "🔴" : "⚪";
     console.log(
-      `  ${voteColor} SIGNAL: ${finalVote} | conf ${confidence}% | gap ${(priceGap * 100).toFixed(1)}% | ${parsed.reason?.slice(0, 50)}`
+      `  ${voteColor} ${finalVote} | conf ${confidence}% | gap ${(priceGap * 100).toFixed(1)}% | ${claudeMs}ms | ${parsed.reason?.slice(0, 50)}`
     );
 
-    // Send Telegram alert for actionable signals (confidence >= 67% AND gap >= 10%)
+    // Telegram alert for actionable signals
     if (finalVote !== "NO_TRADE" && confidence >= MIN_CONFIDENCE && priceGap >= MIN_PRICE_GAP) {
       const alertMsg = [
         `*PolyBot Signal*`,
         ``,
         `Market: ${title.slice(0, 60)}`,
+        `Ticker: ${kalshiTicker}`,
         `Signal: ${finalVote}`,
         `Confidence: ${confidence}%`,
-        `Price: ${(price * 100).toFixed(0)}c`,
+        `Price: ${(yesPrice * 100).toFixed(0)}c`,
         `Strategy: ${strategy}`,
-        `Why: ${parsed.reason?.slice(0, 80) ?? ""}`,
         ``,
         `polybot-app.pages.dev/bot`,
       ].join("\n");
@@ -471,203 +463,88 @@ What is your analysis?`;
 }
 
 // ---------------------------------------------------------------------------
-// Parse trade message
+// Kalshi polling loop
 // ---------------------------------------------------------------------------
 
-interface ParsedTrade {
-  conditionId: string;
-  title: string;
-  outcome: string;
-  price: number;
-  size: number;
-  usdAmount: number;
-}
+async function pollKalshi(): Promise<void> {
+  totalPolled++;
+  console.log(`\n🔄 Poll #${totalPolled} — fetching Kalshi events...`);
 
-function parseTrade(raw: string): ParsedTrade | null {
   try {
-    const msg = JSON.parse(raw);
+    const data = await kalshiFetch<{
+      events: KalshiEvent[];
+      markets?: KalshiMarketFromAPI[];
+    }>("GET", "/events?status=open&with_nested_markets=true&limit=200");
 
-    // Real format: { connection_id, payload: { asset, conditionId, eventSlug, ... } }
-    const p = msg.payload ?? msg;
-
-    // Try multiple field locations
-    const conditionId = p.conditionId ?? p.condition_id ?? p.asset_id ?? p.market ?? "";
-    const eventSlug = p.eventSlug ?? p.event_slug ?? "";
-    const title = p.question ?? p.title ?? p.market_slug ?? eventSlug ?? conditionId;
-    const outcome = p.outcome ?? p.side ?? p.type ?? "unknown";
-    const price = parseFloat(p.price ?? p.last_price ?? p.avgPrice ?? "0");
-    const size = parseFloat(p.size ?? p.amount ?? p.matchedAmount ?? "0");
-
-    // Also check for nested trade data
-    const tradePrice = price || parseFloat(p.tradePrice ?? "0");
-    const tradeSize = size || parseFloat(p.tradeAmount ?? "0");
-
-    if (!conditionId && !eventSlug) return null;
-    if (isNaN(tradePrice) || tradePrice === 0) return null;
-
-    // If size is 0, this might be a market update not a trade — still track it
-    const finalSize = tradeSize > 0 ? tradeSize : 1;
-
-    return {
-      conditionId: conditionId || eventSlug,
-      title: title || eventSlug,
-      outcome,
-      price: tradePrice,
-      size: finalSize,
-      usdAmount: tradePrice * finalSize,
-    };
-  } catch {
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Process a single trade
-// ---------------------------------------------------------------------------
-
-async function processTrade(trade: ParsedTrade): Promise<void> {
-  totalReceived++;
-
-  // Filter: USD amount
-  if (trade.usdAmount < MIN_USD) {
-    totalFiltered++;
-    return;
-  }
-
-  // Filter: price range (skip near-resolution)
-  if (trade.price < PRICE_MIN || trade.price > PRICE_MAX) {
-    totalFiltered++;
-    return;
-  }
-
-  // Filter: sports
-  if (isSports(trade.title)) {
-    totalFiltered++;
-    return;
-  }
-
-  // Log the trade
-  const side = trade.outcome.toUpperCase();
-  const category = categorize(trade.title);
-  console.log(
-    `🔵 TRADE | $${trade.usdAmount.toFixed(0)} | ${side} @ ${trade.price.toFixed(3)} | [${category}] ${trade.title.slice(0, 60)}`
-  );
-
-  // Save to markets
-  const marketId = await saveMarket(trade);
-  if (!marketId) return;
-  totalSaved++;
-
-  // Save whale activity (all trades >= $500 that pass filters)
-  await saveWhale(marketId, trade.outcome, trade.usdAmount, trade.price);
-  totalWhales++;
-
-  console.log(`  ✅ Saved to Supabase (market: ${marketId.slice(0, 8)}...)`);
-
-  // Analyze with Claude (runs inline — no Cloudflare timeout)
-  await analyzeMarket(marketId, trade.title, category, trade.price, trade.usdAmount);
-}
-
-// ---------------------------------------------------------------------------
-// WebSocket connection
-// ---------------------------------------------------------------------------
-
-function connect(): void {
-  console.log("\n🔌 Connecting to Polymarket WebSocket...");
-  console.log(`   URL: ${POLYMARKET_WS}`);
-  console.log(`   Supabase: ${SUPABASE_URL}`);
-  console.log(`   Min USD: $${MIN_USD}`);
-  console.log(`   Price range: ${PRICE_MIN}–${PRICE_MAX}`);
-  console.log(`   Sports filter: ON`);
-  console.log(`   Claude analysis: ${anthropic ? "ON" : "OFF (no ANTHROPIC_API_KEY)"}\n`);
-
-  const ws = new WebSocket(POLYMARKET_WS);
-
-  ws.on("open", () => {
-    console.log("✅ Connected to Polymarket WebSocket\n");
-    startTime = Date.now();
-
-    // Try multiple subscription formats to find what works
-    const sub1 = {
-      action: "subscribe",
-      subscriptions: [
-        { topic: "activity", type: "trades" },
-        { topic: "activity", type: "*" },
-      ],
-    };
-    ws.send(JSON.stringify(sub1));
-    console.log("📡 Sent subscription format 1 (action + topic/type)");
-
-    // Also try the simpler format
-    const sub2 = {
-      type: "subscribe",
-      channel: "market_data",
-    };
-    ws.send(JSON.stringify(sub2));
-    console.log("📡 Sent subscription format 2 (type/channel)");
-
-    console.log("👀 Watching for trades >= $" + MIN_USD + "...\n");
-  });
-
-  ws.on("message", (data: WebSocket.Data) => {
-    const raw = data.toString();
-
-    // Debug: log first 10 raw messages to see format
-    if (totalReceived < 10) {
-      console.log(`📩 RAW MSG #${totalReceived + 1}:`, raw.slice(0, 500));
+    // Collect all markets from events
+    let allMarkets: KalshiMarketFromAPI[] = [];
+    if (data.markets && data.markets.length > 0) {
+      allMarkets = data.markets;
+    } else if (data.events) {
+      for (const evt of data.events) {
+        if (evt.markets) allMarkets.push(...evt.markets);
+      }
     }
 
-    const trade = parseTrade(raw);
-    if (trade) {
-      processTrade(trade).catch((err) =>
-        console.error("  ❌ processTrade error:", err)
+    totalMarketsFound = allMarkets.length;
+    console.log(`  📦 ${allMarkets.length} markets from ${data.events?.length ?? 0} events`);
+
+    let processed = 0;
+    for (const m of allMarkets) {
+      if (m.status !== "open") continue;
+
+      // Price filter
+      const yesPrice = m.yes_bid > 0 ? m.yes_bid / 100 : 0;
+      if (yesPrice < PRICE_MIN || yesPrice > PRICE_MAX) {
+        totalFiltered++;
+        continue;
+      }
+
+      // Sports filter
+      if (isSports(m.title)) {
+        totalFiltered++;
+        continue;
+      }
+
+      // Category filter: AI/Tech and Politics only
+      const category = categorize(m.title);
+      if (category === "other") {
+        totalFiltered++;
+        continue;
+      }
+
+      // Save market to Supabase (with kalshi_ticker)
+      const marketId = await saveMarket(m);
+      if (!marketId) continue;
+      totalSaved++;
+      processed++;
+
+      console.log(
+        `  📈 ${m.ticker} | ${(yesPrice * 100).toFixed(0)}c | [${category}] ${m.title.slice(0, 55)}`
       );
-    } else {
-      // Count messages that don't parse as trades
-      totalReceived++;
+
+      // Analyze with Claude
+      await analyzeMarket(
+        marketId,
+        m.ticker,
+        m.title,
+        category,
+        yesPrice,
+        m.volume_24h ?? m.volume ?? 0
+      );
     }
-  });
 
-  ws.on("close", (code: number, reason: Buffer) => {
-    console.log(`\n🔌 Disconnected (code: ${code}, reason: ${reason.toString()})`);
-    printStats();
-
-    if (code !== 1000) {
-      console.log("⏳ Reconnecting in 5 seconds...\n");
-      setTimeout(connect, 5_000);
-    }
-  });
-
-  ws.on("error", (err: Error) => {
-    console.error("❌ WebSocket error:", err.message);
-  });
+    console.log(`  ✅ Processed ${processed} markets this poll`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  ❌ Poll failed: ${msg}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Stats printer (every 60 seconds)
+// Startup self-test
 // ---------------------------------------------------------------------------
 
-setInterval(printStats, 60_000);
-
-// Check kill switch every 60 seconds
-setInterval(checkKillSwitch, 60_000);
-
-// Check auto kill switch (drawdown) every 5 minutes
-setInterval(checkAutoKillSwitch, 300_000);
-
-// ---------------------------------------------------------------------------
-// Start
-// ---------------------------------------------------------------------------
-
-console.log("═══════════════════════════════════════");
-console.log("  PolyBot Feed — Polymarket → Supabase");
-console.log("═══════════════════════════════════════");
-
-// ---------------------------------------------------------------------------
-// Startup self-test: verify Claude + Supabase pipeline works end-to-end
-// ---------------------------------------------------------------------------
-
-// Helper: wrap a thenable with a timeout (prevents hanging on network issues)
 function withTimeout<T>(thenable: PromiseLike<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
     Promise.resolve(thenable),
@@ -678,73 +555,57 @@ function withTimeout<T>(thenable: PromiseLike<T>, ms: number, label: string): Pr
 }
 
 async function selfTest(): Promise<void> {
-  console.log("\n🧪 SELF-TEST: Verifying full signal pipeline...\n");
+  console.log("\n🧪 SELF-TEST: Verifying pipeline...\n");
 
-  // Step 1: Test Supabase write (10s timeout)
+  // 1. Supabase write
   console.log("  1️⃣  Testing Supabase write...");
   try {
-    const writeResult = await withTimeout(
+    const wr = await withTimeout(
       supabase.from("signals").insert({
         market_id: null,
         strategy: "self_test",
         claude_vote: "NO_TRADE",
-        gpt4o_vote: null,
-        gemini_vote: null,
         consensus: "NO_TRADE",
         confidence: 0,
         ai_probability: 0.5,
         market_price: 0.5,
         price_gap: 0,
-        reasoning: "Self-test signal — safe to delete",
+        reasoning: "Self-test — safe to delete",
         acted_on: false,
       }) as PromiseLike<{ error: { message: string } | null }>,
       10_000,
       "Supabase INSERT"
     );
-    if (writeResult.error) {
-      console.error("  ❌ Supabase INSERT failed:", writeResult.error.message);
-      console.error("  ⚠️  Check RLS policies on signals table");
-      console.error("  ⚠️  Signals will NOT be saved. Fix this before continuing.\n");
+    if (wr.error) {
+      console.error("  ❌ Supabase INSERT failed:", wr.error.message);
       return;
     }
     console.log("  ✅ Supabase write OK");
   } catch (err) {
     console.error("  ❌ Supabase write error:", err instanceof Error ? err.message : String(err));
-    console.log("  ⚠️  Continuing anyway — feed will attempt saves during operation\n");
     return;
   }
 
-  // Step 2: Test Supabase read (10s timeout)
+  // 2. Supabase read + cleanup
   console.log("  2️⃣  Testing Supabase read...");
   try {
-    const readResult = await withTimeout(
-      supabase
-        .from("signals")
-        .select("id, strategy")
-        .eq("strategy", "self_test")
-        .order("created_at", { ascending: false })
-        .limit(1) as PromiseLike<{ data: any[] | null; error: { message: string } | null }>,
+    const rd = await withTimeout(
+      supabase.from("signals").select("id").eq("strategy", "self_test")
+        .order("created_at", { ascending: false }).limit(1) as PromiseLike<{ data: any[] | null; error: { message: string } | null }>,
       10_000,
       "Supabase SELECT"
     );
-    if (readResult.error) {
-      console.error("  ❌ Supabase SELECT failed:", readResult.error.message);
+    if (rd.error || !rd.data?.length) {
+      console.error("  ❌ Read failed");
       return;
     }
-    if (!readResult.data || readResult.data.length === 0) {
-      console.error("  ❌ Write succeeded but read returned 0 rows — check RLS SELECT policy");
-      return;
-    }
-    console.log("  ✅ Supabase read OK (signal id:", readResult.data[0].id.slice(0, 8) + "...)");
-
-    // Clean up test signal
-    await supabase.from("signals").delete().eq("id", readResult.data[0].id);
+    console.log("  ✅ Supabase read OK");
+    await supabase.from("signals").delete().eq("id", rd.data[0].id);
   } catch (err) {
-    console.error("  ❌ Supabase read error:", err instanceof Error ? err.message : String(err));
-    console.log("  ⚠️  Continuing anyway\n");
+    console.error("  ❌ Read error:", err instanceof Error ? err.message : String(err));
   }
 
-  // Step 3: Test Claude API (quick, cheap call — 15s timeout via SDK)
+  // 3. Claude API
   if (anthropic) {
     console.log("  3️⃣  Testing Claude API...");
     try {
@@ -755,58 +616,62 @@ async function selfTest(): Promise<void> {
         temperature: 0,
       });
       const text = res.content[0]?.type === "text" ? res.content[0].text : "";
-      console.log(`  ✅ Claude API OK (response: "${text.trim()}")`);
+      console.log(`  ✅ Claude API OK ("${text.trim()}")`);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error("  ❌ Claude API failed:", msg);
-      console.error("  ⚠️  Check ANTHROPIC_API_KEY and credit balance");
-      console.error("  ⚠️  Claude analysis will NOT work. Fix this before continuing.\n");
+      console.error("  ❌ Claude API failed:", err instanceof Error ? err.message : String(err));
       return;
     }
-  } else {
-    console.log("  ⏭️  Claude test skipped (no ANTHROPIC_API_KEY)");
   }
 
-  // Step 4: Count existing signals (5s timeout)
+  // 4. Kalshi API
+  console.log("  4️⃣  Testing Kalshi API...");
   try {
-    const countResult = await withTimeout(
-      supabase.from("signals").select("id", { count: "exact", head: true }) as PromiseLike<{ data: any[] | null }>,
-      5_000,
-      "Signal count"
-    );
-    const existingCount = countResult.data?.length ?? 0;
-    console.log(`  4️⃣  Existing signals in Supabase: ${existingCount}`);
-  } catch {
-    console.log("  4️⃣  Could not count existing signals (timeout)");
+    const bal = await kalshiFetch<{ balance: number }>("GET", "/portfolio/balance");
+    console.log(`  ✅ Kalshi API OK (balance: $${(bal.balance / 100).toFixed(2)})`);
+  } catch (err) {
+    console.error("  ❌ Kalshi API failed:", err instanceof Error ? err.message : String(err));
+    console.error("  ⚠️  Feed will still run but market data may fail");
   }
 
-  // Step 5: Check kill switch
+  // 5. Kill switch
   console.log("  5️⃣  Checking kill switch...");
   const killed = await checkKillSwitch();
-  if (killed) {
-    console.log("  🔴 Kill switch is ACTIVE — Claude analysis will be blocked");
-    // Notify via Telegram
-    sendTelegramMessage("*KILL SWITCH ACTIVE*\nFeed started but trading is halted.\npolybot-app.pages.dev/bot").catch(() => {});
-  } else {
-    console.log("  ✅ Kill switch OFF — trading allowed");
-  }
+  console.log(killed ? "  🔴 Kill switch ACTIVE" : "  ✅ Kill switch OFF");
 
-  // Step 6: Verify Telegram
-  const tgOk = await sendTelegramMessage("*PolyBot Feed Started*\nSelf-test passed. Watching for signals.");
-  if (tgOk) {
-    console.log("  6️⃣  ✅ Telegram alert sent");
-  } else {
-    console.log("  6️⃣  ⏭️  Telegram skipped (no TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID)");
-  }
+  // 6. Telegram
+  const tgOk = await sendTelegramMessage("*PolyBot Kalshi Feed Started*\nSelf-test passed. Polling every 30s.");
+  console.log(tgOk ? "  6️⃣  ✅ Telegram sent" : "  6️⃣  ⏭️  Telegram skipped");
 
-  console.log(`\n🧪 SELF-TEST COMPLETE ✅ — Starting feed\n`);
+  console.log(`\n🧪 SELF-TEST COMPLETE ✅\n`);
 }
 
-// Run self-test, then start the feed
+// ---------------------------------------------------------------------------
+// Intervals
+// ---------------------------------------------------------------------------
+
+setInterval(printStats, 60_000);
+setInterval(checkKillSwitch, 60_000);
+setInterval(checkAutoKillSwitch, 300_000);
+
+// ---------------------------------------------------------------------------
+// Start
+// ---------------------------------------------------------------------------
+
+console.log("═══════════════════════════════════════");
+console.log("  PolyBot Feed — Kalshi → Supabase");
+console.log(`  Polling every ${POLL_INTERVAL_MS / 1000}s`);
+console.log("═══════════════════════════════════════");
+
 selfTest()
-  .then(() => connect())
+  .then(async () => {
+    // First poll immediately
+    await pollKalshi();
+    // Then poll on interval
+    setInterval(pollKalshi, POLL_INTERVAL_MS);
+    console.log(`\n👀 Watching Kalshi markets every ${POLL_INTERVAL_MS / 1000}s...\n`);
+  })
   .catch((err) => {
     console.error("❌ Self-test crashed:", err);
     console.log("Starting feed anyway...\n");
-    connect();
+    setInterval(pollKalshi, POLL_INTERVAL_MS);
   });

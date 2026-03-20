@@ -121,13 +121,12 @@ async function fetchBalance(): Promise<BalanceData> {
 async function executeTrade(
   signal: { id: string; market_id: string; consensus: string; confidence: number; market_price: number; strategy: string },
   marketTicker: string,
-  marketTitle: string,
   paperTrade: boolean
 ): Promise<{ orderId: string; size: number; paperTrade: boolean }> {
   const res = await fetch("/api/trade", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ signal, marketTicker, marketTitle, paperTrade }),
+    body: JSON.stringify({ signal, marketTicker, paperTrade }),
   });
   const json = await res.json();
   if (!json.ok) throw new Error(json.error ?? "Trade failed");
@@ -826,8 +825,7 @@ export default function BotDashboard() {
             market_price: signal.market_price ?? 0.5,
             strategy: signal.strategy ?? "unknown",
           },
-          market.polymarket_id ?? market.id,
-          market.title ?? "",
+          market.kalshi_ticker ?? market.polymarket_id ?? market.id,
           paperMode
         );
         setToast(

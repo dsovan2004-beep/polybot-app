@@ -1,17 +1,12 @@
 // ============================================================================
-// PolyBot — Trade Execution API (Sprint 6 → Sprint 7 fix)
+// PolyBot — Trade Execution API (Sprint 7)
 // POST /api/trade
-// Step-by-step: kill switch → auth → balance → size → find ticker → order
+// Uses kalshi_ticker directly from signal — no more fuzzy search
 // Edge runtime compatible
 // ============================================================================
 
 import { getServiceSupabase } from "@/lib/supabase";
-import {
-  getBalance,
-  getMarketByTicker,
-  searchMarketByTitle,
-  placeLimitOrder,
-} from "@/lib/kalshi";
+import { getBalance, placeLimitOrder } from "@/lib/kalshi";
 import { sendTradeAlert, sendKillSwitchAlert } from "@/lib/telegram";
 
 export const runtime = "edge";
@@ -30,11 +25,9 @@ interface TradeRequestBody {
     confidence: number;
     market_price: number;
     strategy: string;
-    market_title?: string;
   };
+  /** Kalshi ticker — passed directly from dashboard (from markets.kalshi_ticker) */
   marketTicker: string;
-  /** Market title from Polymarket — used to fuzzy-search Kalshi */
-  marketTitle?: string;
   paperTrade: boolean;
 }
 
@@ -45,17 +38,16 @@ export async function POST(request: Request) {
     // ---- 0. Parse body ----
     debug.step = "parse-body";
     const body = (await request.json()) as TradeRequestBody;
-    const { signal, marketTicker, marketTitle, paperTrade } = body;
+    const { signal, marketTicker, paperTrade } = body;
 
     debug.marketTicker = marketTicker;
-    debug.marketTitle = marketTitle;
     debug.paperTrade = paperTrade;
     debug.consensus = signal?.consensus;
     debug.confidence = signal?.confidence;
 
-    if (!signal) {
+    if (!signal || !marketTicker) {
       return Response.json(
-        { ok: false, error: "Missing signal", debug },
+        { ok: false, error: "Missing signal or marketTicker", debug },
         { status: 400 }
       );
     }
@@ -68,8 +60,6 @@ export async function POST(request: Request) {
       .select("kill_switch")
       .eq("date", today)
       .single();
-
-    debug.killSwitch = perfData?.kill_switch ?? false;
 
     if (perfData?.kill_switch === true) {
       await sendKillSwitchAlert(
@@ -95,16 +85,9 @@ export async function POST(request: Request) {
     const kalshiApiKey = process.env.KALSHI_API_KEY;
     const kalshiPrivateKey = process.env.KALSHI_PRIVATE_KEY;
 
-    debug.hasApiKey = !!kalshiApiKey;
-    debug.hasPrivateKey = !!kalshiPrivateKey;
-
     if (!paperTrade && (!kalshiApiKey || !kalshiPrivateKey)) {
       return Response.json(
-        {
-          ok: false,
-          error: "Kalshi API keys missing — cannot place live trade",
-          debug,
-        },
+        { ok: false, error: "Kalshi API keys missing", debug },
         { status: 400 }
       );
     }
@@ -119,7 +102,6 @@ export async function POST(request: Request) {
         debug.kalshiBalance = bal.balance;
         const fivePct = bal.balance * 0.05;
         tradeSize = Math.min(fivePct, MAX_TRADE_SIZE);
-        debug.fivePctSize = fivePct;
       } catch (balErr) {
         debug.balanceError =
           balErr instanceof Error ? balErr.message : String(balErr);
@@ -139,87 +121,16 @@ export async function POST(request: Request) {
     const count = Math.max(1, Math.floor(tradeSize));
     debug.count = count;
 
-    // ---- 5. Resolve Kalshi ticker ----
-    // Strategy: try exact ticker first, then fuzzy search by title
-    debug.step = "resolve-ticker";
-    let resolvedTicker: string | null = null;
-
-    if (!paperTrade && kalshiApiKey && kalshiPrivateKey) {
-      // 5a. Try exact ticker lookup (in case marketTicker IS a Kalshi ticker)
-      try {
-        const exact = await getMarketByTicker(
-          marketTicker,
-          kalshiApiKey,
-          kalshiPrivateKey
-        );
-        if (exact) {
-          resolvedTicker = exact.ticker;
-          debug.tickerMethod = "exact-match";
-          debug.kalshiMarketTitle = exact.title;
-        }
-      } catch {
-        // Not found — continue to title search
-      }
-
-      // 5b. If exact failed, search by market title
-      if (!resolvedTicker && marketTitle) {
-        debug.step = "search-by-title";
-        const searchResult = await searchMarketByTitle(
-          marketTitle,
-          kalshiApiKey,
-          kalshiPrivateKey
-        );
-        debug.searchResult = {
-          queries: searchResult.queries,
-          candidateCount: searchResult.candidateCount,
-          bestScore: searchResult.bestScore,
-          log: searchResult.debug,
-        };
-
-        if (searchResult.market && searchResult.bestScore > 10) {
-          resolvedTicker = searchResult.market.ticker;
-          debug.tickerMethod = "title-search";
-          debug.kalshiMarketTitle = searchResult.market.title;
-        }
-      }
-
-      // 5c. If still no match → block the trade
-      if (!resolvedTicker) {
-        debug.tickerMethod = "not-found";
-        return Response.json(
-          {
-            ok: false,
-            error: "Market not on Kalshi — trade manually",
-            kalshiSearched: true,
-            debug,
-          },
-          { status: 404 }
-        );
-      }
-    } else {
-      // Paper trade — use whatever ticker was sent
-      resolvedTicker = marketTicker;
-    }
-
-    debug.resolvedTicker = resolvedTicker;
-
-    // ---- 6. Place order ----
+    // ---- 5. Place order (ticker comes directly from Kalshi feed) ----
     debug.step = "place-order";
     const orderResult = await placeLimitOrder(
-      {
-        marketTicker: resolvedTicker,
-        side,
-        price,
-        count,
-        paperTrade,
-      },
+      { marketTicker, side, price, count, paperTrade },
       kalshiApiKey ?? "",
       kalshiPrivateKey ?? ""
     );
 
     debug.orderSuccess = orderResult.success;
     debug.orderId = orderResult.orderId;
-    debug.orderPaper = orderResult.paperTrade;
 
     if (!orderResult.success) {
       debug.orderError = orderResult.error;
@@ -229,38 +140,34 @@ export async function POST(request: Request) {
       );
     }
 
-    // ---- 7. Save to Supabase trades table ----
+    // ---- 6. Save to Supabase trades table ----
     debug.step = "save-trade";
-    const tradePayload = {
-      signal_id: signal.id,
-      market_id: signal.market_id,
-      direction: side,
-      entry_price: signal.market_price,
-      shares: count,
-      entry_cost: tradeSize,
-      strategy: signal.strategy ?? "unknown",
-      status: "open",
-      notes: orderResult.paperTrade
-        ? `PAPER: ${orderResult.orderId}`
-        : `LIVE: ${orderResult.orderId} | ${resolvedTicker}`,
-    };
-
     const { error: tradeErr } = await getServiceSupabase()
       .from("trades")
-      .insert(tradePayload);
+      .insert({
+        signal_id: signal.id,
+        market_id: signal.market_id,
+        direction: side,
+        entry_price: signal.market_price,
+        shares: count,
+        entry_cost: tradeSize,
+        strategy: signal.strategy ?? "unknown",
+        status: "open",
+        notes: orderResult.paperTrade
+          ? `PAPER: ${orderResult.orderId}`
+          : `LIVE: ${orderResult.orderId} | ${marketTicker}`,
+      });
 
     if (tradeErr) {
       debug.supabaseError = tradeErr.message;
       console.error("[trade] Supabase save failed:", tradeErr.message);
-    } else {
-      debug.supabaseSaved = true;
     }
 
-    // ---- 8. Telegram alert ----
+    // ---- 7. Telegram alert ----
     debug.step = "telegram-alert";
     await sendTradeAlert(
       {
-        market: resolvedTicker,
+        market: marketTicker,
         side: side.toUpperCase(),
         size: tradeSize,
         price,
@@ -280,14 +187,13 @@ export async function POST(request: Request) {
         side,
         price,
         paperTrade: orderResult.paperTrade,
-        ticker: resolvedTicker,
+        ticker: marketTicker,
       },
       debug,
     });
   } catch (err) {
     debug.step = `caught-exception-at-${debug.step}`;
     debug.error = err instanceof Error ? err.message : String(err);
-    debug.stack = err instanceof Error ? err.stack?.slice(0, 500) : undefined;
 
     return Response.json(
       {

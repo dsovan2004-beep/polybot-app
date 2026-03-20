@@ -13,6 +13,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 export interface MarketRow {
   id: string;
   polymarket_id: string;
+  kalshi_ticker: string | null;
   title: string;
   category: string;
   current_price: number | null;
