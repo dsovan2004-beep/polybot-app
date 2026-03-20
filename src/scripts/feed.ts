@@ -36,7 +36,9 @@ if (!ANTHROPIC_API_KEY) {
 } else {
   console.log(`✅ ANTHROPIC_API_KEY loaded (${ANTHROPIC_API_KEY.slice(0, 12)}...)`);
 }
-const anthropic = ANTHROPIC_API_KEY ? new Anthropic({ apiKey: ANTHROPIC_API_KEY }) : null;
+const anthropic = ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: ANTHROPIC_API_KEY, timeout: 15_000 })
+  : null;
 
 const POLYMARKET_WS = "wss://ws-live-data.polymarket.com";
 const MIN_USD = 10;
@@ -224,6 +226,7 @@ Current YES price: ${price} (implied probability: ${(price * 100).toFixed(1)}%)
 
 What is your analysis?`;
 
+    const claudeStart = Date.now();
     const res = await anthropic.messages.create({
       model: CLAUDE_MODEL,
       max_tokens: 256,
@@ -231,6 +234,8 @@ What is your analysis?`;
       messages: [{ role: "user", content: userPrompt }],
       temperature: 0.3,
     });
+    const claudeMs = Date.now() - claudeStart;
+    console.log(`  ⏱️  Claude responded in ${claudeMs}ms`);
 
     const content = res.content[0]?.type === "text" ? res.content[0].text : "";
     console.log(`  📝 Claude raw response: ${content.slice(0, 120)}...`);
@@ -262,7 +267,7 @@ What is your analysis?`;
     const strategy = validStrategies.includes(parsed.strategy) ? parsed.strategy : "unknown";
 
     // Save signal to Supabase signals table
-    const { error } = await supabase.from("signals").insert({
+    const signalPayload = {
       market_id: marketId,
       strategy,
       claude_vote: finalVote,
@@ -275,12 +280,21 @@ What is your analysis?`;
       price_gap: priceGap,
       reasoning: String(parsed.reason ?? ""),
       acted_on: false,
-    });
+    };
+    console.log(`  💾 Saving signal: ${finalVote} | conf=${confidence} | gap=${(priceGap * 100).toFixed(1)}%`);
+
+    const { data: savedSignal, error } = await supabase
+      .from("signals")
+      .insert(signalPayload)
+      .select("id")
+      .single();
 
     if (error) {
       console.error("  ❌ Signal save failed:", error.message);
+      console.error("  ❌ Payload:", JSON.stringify(signalPayload));
       return;
     }
+    console.log(`  💾 Signal saved to Supabase (id: ${savedSignal?.id?.slice(0, 8)}...)`);
 
     totalSignals++;
     const voteColor = finalVote === "YES" ? "🟢" : finalVote === "NO" ? "🔴" : "⚪";
@@ -480,4 +494,98 @@ console.log("══════════════════════�
 console.log("  PolyBot Feed — Polymarket → Supabase");
 console.log("═══════════════════════════════════════");
 
-connect();
+// ---------------------------------------------------------------------------
+// Startup self-test: verify Claude + Supabase pipeline works end-to-end
+// ---------------------------------------------------------------------------
+
+async function selfTest(): Promise<void> {
+  console.log("\n🧪 SELF-TEST: Verifying full signal pipeline...\n");
+
+  // Step 1: Test Supabase write
+  console.log("  1️⃣  Testing Supabase write...");
+  const testId = "00000000-0000-0000-0000-000000000000";
+  const { error: writeErr } = await supabase.from("signals").insert({
+    market_id: null,
+    strategy: "self_test",
+    claude_vote: "NO_TRADE",
+    gpt4o_vote: null,
+    gemini_vote: null,
+    consensus: "NO_TRADE",
+    confidence: 0,
+    ai_probability: 0.5,
+    market_price: 0.5,
+    price_gap: 0,
+    reasoning: "Self-test signal — safe to delete",
+    acted_on: false,
+  });
+  if (writeErr) {
+    console.error("  ❌ Supabase INSERT failed:", writeErr.message);
+    console.error("  ⚠️  Check RLS policies on signals table — anon role needs INSERT permission");
+    console.error("  ⚠️  Signals will NOT be saved. Fix this before continuing.\n");
+    return;
+  }
+  console.log("  ✅ Supabase write OK");
+
+  // Step 2: Test Supabase read
+  console.log("  2️⃣  Testing Supabase read...");
+  const { data: readData, error: readErr } = await supabase
+    .from("signals")
+    .select("id, strategy")
+    .eq("strategy", "self_test")
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (readErr) {
+    console.error("  ❌ Supabase SELECT failed:", readErr.message);
+    return;
+  }
+  if (!readData || readData.length === 0) {
+    console.error("  ❌ Write succeeded but read returned 0 rows — check RLS SELECT policy");
+    return;
+  }
+  console.log("  ✅ Supabase read OK (signal id:", readData[0].id.slice(0, 8) + "...)");
+
+  // Clean up test signal
+  await supabase.from("signals").delete().eq("id", readData[0].id);
+
+  // Step 3: Test Claude API (quick, cheap call)
+  if (anthropic) {
+    console.log("  3️⃣  Testing Claude API...");
+    try {
+      const res = await anthropic.messages.create({
+        model: CLAUDE_MODEL,
+        max_tokens: 32,
+        messages: [{ role: "user", content: "Reply with only: OK" }],
+        temperature: 0,
+      });
+      const text = res.content[0]?.type === "text" ? res.content[0].text : "";
+      console.log(`  ✅ Claude API OK (response: "${text.trim()}")`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("  ❌ Claude API failed:", msg);
+      console.error("  ⚠️  Check ANTHROPIC_API_KEY and credit balance");
+      console.error("  ⚠️  Claude analysis will NOT work. Fix this before continuing.\n");
+      return;
+    }
+  } else {
+    console.log("  ⏭️  Claude test skipped (no ANTHROPIC_API_KEY)");
+  }
+
+  // Step 4: Count existing signals
+  const { data: countData } = await supabase
+    .from("signals")
+    .select("id", { count: "exact", head: true });
+  const existingCount = countData?.length ?? 0;
+
+  console.log(`\n🧪 SELF-TEST PASSED ✅ — Pipeline is healthy`);
+  console.log(`   Existing signals in Supabase: ${existingCount}`);
+  console.log("");
+}
+
+// Run self-test, then start the feed
+selfTest()
+  .then(() => connect())
+  .catch((err) => {
+    console.error("❌ Self-test crashed:", err);
+    console.log("Starting feed anyway...\n");
+    connect();
+  });
