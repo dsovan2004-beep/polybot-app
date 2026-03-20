@@ -42,6 +42,10 @@ const SPORTS_KEYWORDS = [
   "nascar", "racing", "grand prix",
   "cycling", "tour de france",
   "wrestling", "wwe", "ufc fight",
+  // Sprint 7 — esports
+  "esports", "esport", "counter-strike", "cs2",
+  "dota", "valorant", "overwatch", "league of legends",
+  "lol", "game winner", "map 2", "map 3",
 ];
 
 // ---------------------------------------------------------------------------

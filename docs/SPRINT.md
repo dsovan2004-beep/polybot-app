@@ -98,21 +98,48 @@ Supabase anon key is read-only when RLS is enabled. Feed script must use SUPABAS
 
 ---
 
-## Sprint 6: First Real Money — IN PROGRESS 🔄
-**Goal:** Fund Kalshi account, wire trading API, place first MAKER order, validate signal accuracy
+## Sprint 6: Kalshi + Telegram — COMPLETE ✅
+**Dates:** Mar 20
+**Goal:** Wire Kalshi API, Telegram alerts, trade execution from dashboard
 
-| Task | Status |
-|------|--------|
-| Fund Kalshi account ($200 via debit card) | ⬜ NOT STARTED |
-| Get Kalshi API key from Settings | ⬜ NOT STARTED |
-| Wire Kalshi trading API to PolyBot | ⬜ NOT STARTED |
-| Place first MAKER order on BTC 5-min market | ⬜ NOT STARTED |
-| Earn first USDC rebate | ⬜ NOT STARTED |
-| Validate 30 paper signals manually | ⬜ NOT STARTED |
-| Track signal accuracy (Claude win rate) | ⬜ NOT STARTED |
-| Only execute live after 67%+ win rate proven | ⬜ NOT STARTED |
+| Deliverable | Status |
+|-------------|--------|
+| src/lib/kalshi.ts — Kalshi REST client with RSA-PSS signing (Web Crypto) | ✅ COMPLETE |
+| src/lib/telegram.ts — Telegram alert system (signal, trade, P&L, kill switch) | ✅ COMPLETE |
+| src/app/api/trade/route.ts — Trade execution endpoint (edge runtime) | ✅ COMPLETE |
+| src/app/api/balance/route.ts — Kalshi balance endpoint (edge runtime) | ✅ COMPLETE |
+| src/scripts/feed.ts — Telegram signal alerts on actionable signals | ✅ COMPLETE |
+| src/app/bot/page.tsx — Execute button + Kalshi balance display | ✅ COMPLETE |
+| All 8 secrets configured (local + Cloudflare) | ✅ COMPLETE |
+| Telegram bot live (@Polybotsalerts_bot) | ✅ COMPLETE |
+| Kalshi API wired with RSA auth | ✅ COMPLETE |
+| Execute button on dashboard (LIVE mode only) | ✅ COMPLETE |
+| Kill switch wired + tested | ✅ COMPLETE |
+
+**Key Milestone — Sprint 6:**
+- All 8 env vars configured: ANTHROPIC, KALSHI (key+RSA), SUPABASE (3), TELEGRAM (2) ✅
+- Telegram alerts firing on phone for every signal ≥67% conf + ≥10% gap ✅
+- Kalshi API uses RSA-PSS private key signing (NOT API Secret) ✅
+- Paper trade gate on every order path ✅
+- Position sizing: 5% of balance, max $10 per trade ✅
 
 ---
 
-## Sprint 7: Scale + Diversify (Planned)
-**Goal:** Scale to $500+, Kelly sizer, Telegram alerts, Kalshi cross-platform arb
+## Sprint 7: First Real Money — IN PROGRESS 🔄
+**Goal:** Validate signals, fund Kalshi, flip to LIVE, place first real trade
+
+| Task | Status |
+|------|--------|
+| Full pre-trade audit (docs/AUDIT2.md) | ✅ COMPLETE |
+| Validate 30 paper signals manually | ⬜ NOT STARTED |
+| Fund Kalshi ($25 already in account) | ⬜ NOT STARTED |
+| Flip to LIVE mode on dashboard | ⬜ NOT STARTED |
+| First real trade via Execute button | ⬜ NOT STARTED |
+| MACD strategy implementation (btc5min.ts) | ✅ COMPLETE |
+| Auto-kill-switch at -20% drawdown | ⬜ NOT STARTED |
+| XGBoost ensemble (future) | ⬜ NOT STARTED |
+
+---
+
+## Sprint 8: Scale + Diversify (Planned)
+**Goal:** Scale to $500+, Kelly sizer, Kalshi cross-platform arb, full autonomous trading
