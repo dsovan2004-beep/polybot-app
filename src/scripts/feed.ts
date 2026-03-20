@@ -75,6 +75,8 @@ const anthropic = ANTHROPIC_API_KEY
 const KALSHI_HOST = "https://api.elections.kalshi.com";
 const KALSHI_API_PREFIX = "/trade-api/v2";
 const KALSHI_API_KEY = process.env.KALSHI_API_KEY;
+// dotenv reads \n inside double-quoted values as literal two-char sequences;
+// replace them with real newlines so crypto can parse the PEM key
 const rawKalshiKey = process.env.KALSHI_PRIVATE_KEY || "";
 const KALSHI_PRIVATE_KEY = rawKalshiKey.replace(/\\n/g, "\n");
 
@@ -83,6 +85,7 @@ if (!KALSHI_API_KEY || !KALSHI_PRIVATE_KEY) {
   process.exit(1);
 }
 console.log(`✅ KALSHI_API_KEY loaded (${KALSHI_API_KEY.slice(0, 8)}...)`);
+console.log(`✅ KALSHI_PRIVATE_KEY loaded (${KALSHI_PRIVATE_KEY.length} chars)`);
 
 const PRICE_MIN = 0.02;
 const PRICE_MAX = 0.98;
@@ -501,18 +504,14 @@ async function pollKalshi(): Promise<void> {
         continue;
       }
 
-      // Sports filter
+      // Sports filter — skip sports markets entirely
       if (isSports(m.title)) {
         totalFiltered++;
         continue;
       }
 
-      // Category filter: AI/Tech and Politics only
+      // Categorize for labeling (not filtering — let Claude decide)
       const category = categorize(m.title);
-      if (category === "other") {
-        totalFiltered++;
-        continue;
-      }
 
       // Save market to Supabase (with kalshi_ticker)
       const marketId = await saveMarket(m);
