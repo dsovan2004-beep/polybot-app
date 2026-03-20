@@ -63,7 +63,7 @@
 |---------|--------|---------|
 | GitHub | ✅ Live | github.com/dsovan2004-beep/polybot-app |
 | Cloudflare | ✅ Live | polybot-app.pages.dev |
-| Supabase | ✅ Live | qvrvfajbxkaqlsaiorbu.supabase.co |
+| Supabase | ✅ Live | [SUPABASE_URL_IN_ENV] |
 | AI | ✅ Live | Claude Haiku (ANTHROPIC_API_KEY) — 20x cheaper |
 | Data Feeds | ✅ Live | Binance WS (free), Polymarket WS (free) |
 | Feed | ✅ Running | Mac terminal (feed.ts with self-test) |

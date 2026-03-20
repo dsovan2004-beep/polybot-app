@@ -21,7 +21,19 @@ const PRICE_MAX = 0.98;
 const SPORTS_KEYWORDS = [
   "nba", "nfl", "ufc", "football", "basketball", "soccer",
   "mlb", "nhl", "tennis", "boxing", "mma", "premier league",
-  "champions league", "world cup", "super bowl",
+  "champions league", "world cup", "super bowl", "playoff",
+  "grand slam", "olympics",
+  // Expanded sports filter (synced with feed.ts)
+  "fc", "vs.", "o/u", "open", "uefa", "premier",
+  "laliga", "bundesliga", "serie a", "ligue 1", "mls",
+  "vallecano", "porto", "stuttgart", "samsunspor",
+  "forest", "madrid", "tagger", "seidel",
+  "spread:", "commodores", "bulldogs",
+  "ncaa", "spread", "covers", "ats",
+  "masters", "world series", "astros",
+  "yankees", "dodgers", "tournament",
+  "pga", "golf", "baseball",
+  "stanley cup", "championship",
 ];
 
 // ---------------------------------------------------------------------------

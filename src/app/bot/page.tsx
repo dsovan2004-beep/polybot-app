@@ -409,9 +409,11 @@ function SignalCard({ signal }: { signal: SignalRow }) {
 function MarketRowItem({
   market,
   signal,
+  isPaper,
 }: {
   market: MarketRow;
   signal: SignalRow | undefined;
+  isPaper: boolean;
 }) {
   const vote = signal?.consensus ?? null;
   const confidence = signal?.confidence ?? null;
@@ -511,6 +513,22 @@ function MarketRowItem({
       >
         {confidence !== null ? `${confidence}%` : "—"}
       </span>
+
+      {/* Paper/Live badge */}
+      <span
+        style={{
+          fontSize: 9,
+          fontWeight: 700,
+          padding: "1px 5px",
+          borderRadius: 3,
+          background: isPaper ? "rgba(74,222,128,0.1)" : "rgba(248,113,113,0.1)",
+          color: isPaper ? "#4ade80" : "#f87171",
+          width: 38,
+          textAlign: "center",
+        }}
+      >
+        {isPaper ? "PAPER" : "LIVE"}
+      </span>
     </div>
   );
 }
@@ -574,9 +592,43 @@ export default function BotDashboard() {
   const [btc, setBtc] = useState<Btc5MinData | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [killSwitchActive, setKillSwitchActive] = useState(false);
+  const [paperMode, setPaperMode] = useState(true);
 
   // Track which markets we've already sent to swarm (avoid duplicate calls)
   const [analyzedIds, setAnalyzedIds] = useState<Set<string>>(new Set());
+
+  // Check kill switch status
+  const checkKillSwitch = useCallback(async () => {
+    try {
+      const res = await fetch("/api/killswitch");
+      const json = await res.json();
+      if (json.ok) setKillSwitchActive(json.data.active);
+    } catch {
+      // Silent fail
+    }
+  }, []);
+
+  // Activate kill switch
+  const activateKillSwitch = useCallback(async () => {
+    if (!confirm("ACTIVATE KILL SWITCH? This will halt all trading.")) return;
+    try {
+      const res = await fetch("/api/killswitch", { method: "POST" });
+      const json = await res.json();
+      if (json.ok) setKillSwitchActive(true);
+    } catch (err) {
+      alert("Failed to activate kill switch: " + (err instanceof Error ? err.message : "Unknown error"));
+    }
+  }, []);
+
+  // Toggle paper/live mode
+  const togglePaperMode = useCallback(() => {
+    if (paperMode) {
+      // Switching to LIVE — require confirmation
+      if (!confirm("Switch to LIVE MODE? Real money will be at risk.")) return;
+    }
+    setPaperMode((prev) => !prev);
+  }, [paperMode]);
 
   // Fetch markets + whales + signals (every 30s)
   const loadMarkets = useCallback(async () => {
@@ -641,13 +693,16 @@ export default function BotDashboard() {
   useEffect(() => {
     loadMarkets();
     loadBtc();
+    checkKillSwitch();
     const dashInterval = setInterval(loadMarkets, 30_000);
     const btcInterval = setInterval(loadBtc, 5_000);
+    const killInterval = setInterval(checkKillSwitch, 60_000);
     return () => {
       clearInterval(dashInterval);
       clearInterval(btcInterval);
+      clearInterval(killInterval);
     };
-  }, [loadMarkets, loadBtc]);
+  }, [loadMarkets, loadBtc, checkKillSwitch]);
 
   // Performance will be wired to Supabase in a future sprint
 
@@ -672,7 +727,8 @@ export default function BotDashboard() {
             <span style={{ color: css.indigo }}>Poly</span>
             <span style={{ color: css.textPrimary }}>Bot</span>
           </h1>
-          <span
+          <button
+            onClick={togglePaperMode}
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -681,31 +737,74 @@ export default function BotDashboard() {
               fontWeight: 500,
               padding: "3px 10px",
               borderRadius: 6,
-              background: "rgba(74,222,128,0.1)",
-              color: "#4ade80",
+              background: paperMode ? "rgba(74,222,128,0.1)" : "rgba(248,113,113,0.15)",
+              color: paperMode ? "#4ade80" : "#f87171",
+              border: `1px solid ${paperMode ? "rgba(74,222,128,0.3)" : "rgba(248,113,113,0.4)"}`,
+              cursor: "pointer",
             }}
           >
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ade80", display: "inline-block" }} />
-            Paper trade
-          </span>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: paperMode ? "#4ade80" : "#f87171", display: "inline-block" }} />
+            {paperMode ? "PAPER" : "LIVE"}
+          </button>
         </div>
         <button
+          onClick={activateKillSwitch}
+          disabled={killSwitchActive}
           style={{
             fontSize: 12,
             fontWeight: 600,
             padding: "6px 16px",
             borderRadius: 6,
-            border: "1px solid #f87171",
-            background: "rgba(248,113,113,0.1)",
-            color: "#f87171",
-            cursor: "pointer",
+            border: `1px solid ${killSwitchActive ? "#64748b" : "#f87171"}`,
+            background: killSwitchActive ? "rgba(100,116,139,0.1)" : "rgba(248,113,113,0.1)",
+            color: killSwitchActive ? "#64748b" : "#f87171",
+            cursor: killSwitchActive ? "not-allowed" : "pointer",
+            opacity: killSwitchActive ? 0.6 : 1,
           }}
         >
-          Kill switch
+          {killSwitchActive ? "KILLED" : "Kill switch"}
         </button>
       </header>
 
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 24px" }}>
+        {/* ── KILL SWITCH ALERT ── */}
+        {killSwitchActive && (
+          <div
+            style={{
+              padding: "12px 16px",
+              marginBottom: 16,
+              borderRadius: css.radius,
+              border: "1px solid #f87171",
+              background: "rgba(248,113,113,0.15)",
+              color: "#f87171",
+              fontSize: 14,
+              fontWeight: 600,
+              textAlign: "center",
+            }}
+          >
+            KILL SWITCH ACTIVE — Trading halted
+          </div>
+        )}
+
+        {/* ── LIVE MODE WARNING ── */}
+        {!paperMode && !killSwitchActive && (
+          <div
+            style={{
+              padding: "12px 16px",
+              marginBottom: 16,
+              borderRadius: css.radius,
+              border: "1px solid #f97316",
+              background: "rgba(249,115,22,0.1)",
+              color: "#f97316",
+              fontSize: 13,
+              fontWeight: 600,
+              textAlign: "center",
+            }}
+          >
+            LIVE MODE — Real money at risk
+          </div>
+        )}
+
         {/* ── ERROR ── */}
         {error && (
           <div
@@ -796,6 +895,7 @@ export default function BotDashboard() {
                           key={m.id}
                           market={m}
                           signal={latestSignal}
+                          isPaper={paperMode}
                         />
                       );
                     })}

@@ -17,3 +17,5 @@ yarn-error.log*
 next-env.d.ts
 setup.sh
 .env.local
+CLAUDE.md
+docs/AUDIT.md

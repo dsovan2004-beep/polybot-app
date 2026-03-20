@@ -79,6 +79,40 @@ const SPORTS_KEYWORDS = [
 ];
 
 // ---------------------------------------------------------------------------
+// Kill Switch
+// ---------------------------------------------------------------------------
+
+let killSwitchActive = false;
+
+async function checkKillSwitch(): Promise<boolean> {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const { data, error } = await supabase
+      .from("performance")
+      .select("kill_switch")
+      .eq("date", today)
+      .single();
+
+    if (error && error.code !== "PGRST116") return false;
+    const active = data?.kill_switch === true;
+
+    if (active && !killSwitchActive) {
+      console.log("\n🔴 KILL SWITCH ACTIVE — halted");
+      console.log("   All Claude analysis stopped. No new signals will be generated.");
+      console.log("   Deactivate via Supabase dashboard to resume.\n");
+    }
+    if (!active && killSwitchActive) {
+      console.log("\n🟢 Kill switch deactivated — resuming normal operation\n");
+    }
+
+    killSwitchActive = active;
+    return active;
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Stats
 // ---------------------------------------------------------------------------
 
@@ -219,6 +253,10 @@ async function analyzeMarket(
   // Debug: log every call so we can see what's happening
   console.log(`  🧠 analyzeMarket called | id=${marketId.slice(0, 8)} | cat=${category} | claude=${anthropic ? "ON" : "OFF"}`);
 
+  if (killSwitchActive) {
+    console.log("  🔴 Skipped: kill switch active");
+    return;
+  }
   if (!anthropic) {
     console.log("  ⏭️  Skipped: no ANTHROPIC_API_KEY");
     return;
@@ -499,6 +537,9 @@ function connect(): void {
 
 setInterval(printStats, 60_000);
 
+// Check kill switch every 60 seconds
+setInterval(checkKillSwitch, 60_000);
+
 // ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
@@ -588,6 +629,15 @@ async function selfTest(): Promise<void> {
     .from("signals")
     .select("id", { count: "exact", head: true });
   const existingCount = countData?.length ?? 0;
+
+  // Step 5: Check kill switch
+  console.log("  5️⃣  Checking kill switch...");
+  const killed = await checkKillSwitch();
+  if (killed) {
+    console.log("  🔴 Kill switch is ACTIVE — Claude analysis will be blocked");
+  } else {
+    console.log("  ✅ Kill switch OFF — trading allowed");
+  }
 
   console.log(`\n🧪 SELF-TEST PASSED ✅ — Pipeline is healthy`);
   console.log(`   Existing signals in Supabase: ${existingCount}`);
