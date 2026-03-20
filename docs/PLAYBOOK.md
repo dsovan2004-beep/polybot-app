@@ -11,21 +11,31 @@ Cloudflare Workers are request/response only. Cannot hold open WebSocket connect
 - **Dashboard** = display layer (Cloudflare Pages, static + edge)
 - **API routes** = data retrieval (Cloudflare Workers, stateless)
 
-### Current Working Pipeline (Sprint 5 validated)
+### Current Working Pipeline (Sprint 7 validated)
 ```
 Mac terminal (feed.ts)
-  → connects Polymarket WebSocket
-  → filters trades ($10+, no sports, 0.02-0.98)
-  → saves to Supabase (markets + whale_activity)
-  → calls Claude Haiku INLINE for each new market
+  → polls Kalshi REST API every 30 seconds
+  → GET /events?status=open&with_nested_markets=true&limit=200
+  → filters: price 0.02-0.98 (last_price_dollars), volume 100+, no sports
+  → saves to Supabase (markets table with kalshi_ticker)
+  → calls Claude INLINE for each new market
   → saves signal to Supabase (signals table)
+  → sends Telegram alert for actionable signals
 
 Dashboard (bot/page.tsx)
   → polls /api/markets every 30 seconds
   → reads signals from Supabase (persisted by feed.ts)
   → displays YES/NO/NO_TRADE badge + confidence %
-  → shows Signal History section
+  → EXEC button uses kalshi_ticker directly (no fuzzy search)
+  → /api/trade places order on Kalshi via RSA-PSS signed request
 ```
+
+### Platform: Kalshi (NOT Polymarket)
+- Switched Sprint 7 — same platform for signals AND execution = no ticker mismatch
+- Feed polls `GET /events` every 30 seconds (847 markets available)
+- `kalshi_ticker` saved directly to Supabase
+- EXEC uses `kalshi_ticker` — no fuzzy search needed
+- Kalshi is CFTC regulated (legal in US)
 
 ---
 
@@ -73,47 +83,33 @@ Single Claude call per market with general analyst prompt. Outputs:
 
 ---
 
-## Polymarket WebSocket — Live Data Feed
+## Kalshi REST API — Live Data Feed
 
-Connection: wss://ws-live-data.polymarket.com
+Platform: Kalshi (api.elections.kalshi.com)
+Auth: RSA-PSS signing (KALSHI_API_KEY + KALSHI_PRIVATE_KEY)
+Endpoint: `GET /trade-api/v2/events?status=open&with_nested_markets=true&limit=200`
+Poll interval: 30 seconds
 
-Subscription format:
-```json
-{
-  "subscriptions": [
-    {
-      "topic": "activity",
-      "type": "trades"
-    }
-  ]
-}
-```
+### Feed Script Filters (Sprint 7)
+- Price: 0.02-0.98 (uses `last_price_dollars`, parseFloat for safety)
+- Volume: 100+ minimum (`volume_24h_fp`, kills dead/novelty markets)
+- Sports filter (100+ keywords): NBA, NFL, UFC, football, basketball, soccer, MLB, NHL, tennis, boxing, MMA, cricket, rugby, esports, etc.
+- No category gate — Claude decides what's tradeable
+- Dedup: never analyze same market twice per session (Set)
+- Each qualifying market → Supabase markets table (with `kalshi_ticker`)
+- Each qualifying market → Claude analysis → Supabase signals table
+- Actionable signals → Telegram alert
 
-### Feed Script Filters
-- Minimum trade size: $10 USD
-- Skip price < 0.02 or > 0.98 (near resolution)
-- Skip sports (expanded keyword list — Sprint 5):
-  NBA, NFL, UFC, football, basketball, soccer, MLB, NHL, tennis, boxing, MMA,
-  FC, vs., O/U, Open, UEFA, Premier, LaLiga, Bundesliga, Serie A, Ligue 1, MLS,
-  Vallecano, Porto, Stuttgart, Samsunspor, Forest, Madrid, Tagger, Seidel,
-  Spread, Commodores, Bulldogs, NCAA, PGA, golf, baseball, Masters, World Series,
-  Astros, Yankees, Dodgers, tournament, Stanley Cup, championship, ATS, covers
-- Dedup: never analyze same market twice per session
-- All qualifying trades → markets table
-- All qualifying trades → whale_activity table
-- Each new market → Claude Haiku analysis → signals table
-
-### Signal Rules (validated Sprint 5)
+### Signal Rules (validated Sprint 7)
 - Minimum confidence: 67%
 - Minimum price gap: 10% (abs(probability - market_price) > 0.10)
 - NO_TRADE if below either threshold
 - Strategy tagged: news_lag / sentiment_fade / logical_arb / maker / unknown
 - Signal saved to Supabase regardless of vote (for tracking)
-- 50 signals generated in first live session ✅
 
-### Validation Process
-- Week 1: Run feed 2-3 hours/day, manually check each signal, record market + Claude vote + actual outcome. Target: 30 validated signals.
-- Week 2: Calculate win rate. If 67%+ → go live on Kalshi. If below → tune prompts and retest.
+### Expiry Filter (Sprint 8 target)
+- 90 days max — surface near-term markets only
+- Fed/crypto/politics markets with near-term resolution = highest edge
 
 ---
 
@@ -123,12 +119,12 @@ Subscription format:
 Maker rebates on BTC 5-min markets. No prediction needed. Place orders both sides. Collect daily USDC.
 
 ### Timeline
-- **Week 1:** Feed running on Mac, 30 paper signals validated ← YOU ARE HERE
-- **Week 2:** Fund Kalshi $200, get API key
-- **Week 3:** Place first MAKER order
-- **Week 4:** First USDC rebate earned
-- **Month 2:** Scale to $500-1K deployed
-- **Month 3:** Bot running autonomously
+- **Week 1:** Feed running on Mac, first real trade placed ✅ DONE
+- **Month 1:** Validate 30 trades, prove 67%+ win rate
+- **Month 2:** Scale to $500 deployed
+- **Month 3:** Scale to $1,000 deployed
+- **Month 6:** $5,000 deployed + PolyBot SaaS launch
+- **Year 2:** $75,000 + 100 SaaS subscribers = $15,000/month
 
 ---
 

@@ -125,21 +125,47 @@ Supabase anon key is read-only when RLS is enabled. Feed script must use SUPABAS
 
 ---
 
-## Sprint 7: First Real Money — IN PROGRESS 🔄
-**Goal:** Validate signals, fund Kalshi, flip to LIVE, place first real trade
+## Sprint 7: First Real Money — COMPLETE ✅
+**Dates:** Mar 20
+**Goal:** Switch to Kalshi, fix pipeline, place first real trade
 
 | Task | Status |
 |------|--------|
 | Full pre-trade audit (docs/AUDIT2.md) | ✅ COMPLETE |
-| Validate 30 paper signals manually | ⬜ NOT STARTED |
-| Fund Kalshi ($25 already in account) | ⬜ NOT STARTED |
-| Flip to LIVE mode on dashboard | ⬜ NOT STARTED |
-| First real trade via Execute button | ⬜ NOT STARTED |
-| MACD strategy implementation (btc5min.ts) | ✅ COMPLETE |
+| Switched data source from Polymarket to Kalshi | ✅ COMPLETE |
+| Fixed RSA private key newline normalization (dotenv) | ✅ COMPLETE |
+| Fixed price field mapping (last_price_dollars) | ✅ COMPLETE |
+| Fixed yesPrice parseFloat bug (string → number) | ✅ COMPLETE |
+| Fixed status filter (active vs open) | ✅ COMPLETE |
+| Removed fuzzy market search (same platform = not needed) | ✅ COMPLETE |
+| kalshi_ticker saved directly to Supabase | ✅ COMPLETE |
+| EXEC button working with real Kalshi tickers | ✅ COMPLETE |
+| 847 Kalshi markets fetching successfully | ✅ COMPLETE |
+| Claude analyzing real Kalshi markets | ✅ COMPLETE |
+| Disabled /api/swarm to cut Claude API cost | ✅ COMPLETE |
+| Volume filter added (100+ minimum) | ✅ COMPLETE |
 | Auto-kill-switch at -20% drawdown | ✅ COMPLETE |
-| XGBoost ensemble (future) | ⬜ NOT STARTED |
+| MACD strategy implementation (btc5min.ts) | ✅ COMPLETE |
+| **FIRST REAL TRADE PLACED ON KALSHI** | ✅ COMPLETE |
+
+**Key Milestone — Sprint 7 (March 20, 2026 4:24 PM PT):**
+- FIRST REAL TRADE: NO on Elon Musk first trillionaire ✅
+- Price: 15% | Payout: $1 if correct
+- Balance: $24.84 | 1 open position
+- Full pipeline: Kalshi REST → feed.ts (Mac) → Claude → Supabase → Dashboard → EXEC → Kalshi order
+
+**Key Discovery — Sprint 7:**
+Polymarket → Kalshi ticker mismatch was causing all EXEC failures. Instead of building fuzzy search, switched entire data source to Kalshi. Same platform for signals AND execution = tickers match = EXEC works immediately. Also: dotenv v17 needs RSA keys wrapped in double quotes with `\n` escapes on a single line — raw multi-line breaks dotenv parsing.
 
 ---
 
-## Sprint 8: Scale + Diversify (Planned)
-**Goal:** Scale to $500+, Kelly sizer, Kalshi cross-platform arb, full autonomous trading
+## Sprint 8: Scale to $15,000/month — IN PROGRESS 🔄
+**Goal:** Prove win rate, scale capital, build PolyBot SaaS
+
+| Task | Status |
+|------|--------|
+| Add 90-day expiry filter to feed | ⬜ NOT STARTED |
+| Validate 30 trades win rate | ⬜ NOT STARTED |
+| Scale to $100 when 67%+ win rate proven | ⬜ NOT STARTED |
+| Build PolyBot SaaS subscription tier | ⬜ NOT STARTED |
+| Target: 100 subscribers x $149/month = $14,900 | ⬜ NOT STARTED |

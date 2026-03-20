@@ -2,7 +2,7 @@
 
 ## Core Trading Rules
 1. Maker not Taker — earn rebates, zero fees
-2. WebSocket only — no REST polling
+2. Kalshi REST polling every 30s (switched from Polymarket WebSocket Sprint 7)
 3. 67% confidence minimum to signal
 4. 10% max per trade, 3-5% standard
 5. Kill switch at -20% in 24hrs
@@ -103,6 +103,25 @@ NOT about making money yet.
 After 30 trades validated → scale.
 
 $25 → $100 → $1,000 → $1,000,000
+
+## Platform Decision — March 20, 2026
+
+Switched from Polymarket to Kalshi for BOTH signals AND execution.
+Reason: Same platform = no ticker mismatch. Polymarket signals had different IDs than Kalshi tickers, causing every EXEC to fail with "market_not_found". Using Kalshi for everything means `kalshi_ticker` flows from feed → Supabase → dashboard → trade route → Kalshi order placement with zero translation.
+Result: EXEC button works end to end.
+
+## First Real Trade — March 20, 2026 4:24 PM PT
+
+Position: NO on Elon Musk first trillionaire
+Price: 15% | Payout: $1 if correct
+Balance after: $24.84 | 1 open position
+THE MILLION DOLLAR JOURNEY BEGINS.
+
+## Primary Goal: $15,000/month
+
+Path 1: Trading profits — scale capital from $25 → $75,000 deployed
+Path 2: PolyBot SaaS — 100 subscribers x $149/month = $14,900/month
+Timeline: 18-24 months
 
 ## Signal Validation Rules (Sprint 5)
 - 50 signals generated in first live session ✅
