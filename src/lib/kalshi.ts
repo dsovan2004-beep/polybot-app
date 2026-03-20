@@ -253,6 +253,156 @@ export async function getMarketByTicker(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Title-based market search
+// Kalshi has NO text search API — we fetch open events with nested markets
+// then fuzzy-match client-side.
+// ---------------------------------------------------------------------------
+
+interface KalshiEvent {
+  event_ticker: string;
+  title: string;
+  markets?: KalshiMarket[];
+}
+
+/** Words to strip when building keyword queries */
+const STOP_WORDS = new Set([
+  "will", "the", "a", "an", "be", "by", "in", "on", "of", "to", "for",
+  "and", "or", "at", "is", "it", "this", "that", "do", "does", "did",
+  "has", "have", "had", "can", "could", "would", "should", "may", "might",
+  "not", "no", "yes", "before", "after", "than", "from", "with", "up",
+  "down", "over", "under", "into", "out", "about", "between",
+]);
+
+/**
+ * Extract keyword variations from a market title.
+ * Returns array of query strings to try, from most specific to least.
+ */
+function extractKeywords(title: string): string[] {
+  const words = title
+    .replace(/[?!,."'()[\]{}:;]/g, "")
+    .split(/\s+/)
+    .filter((w) => w.length > 1);
+
+  const meaningful = words.filter(
+    (w) => !STOP_WORDS.has(w.toLowerCase())
+  );
+
+  const queries: string[] = [];
+
+  // 1. All meaningful words (best match)
+  if (meaningful.length > 0) queries.push(meaningful.join(" "));
+
+  // 2. First 3 meaningful words
+  if (meaningful.length > 3) queries.push(meaningful.slice(0, 3).join(" "));
+
+  // 3. First 2 meaningful words
+  if (meaningful.length > 2) queries.push(meaningful.slice(0, 2).join(" "));
+
+  return queries;
+}
+
+/**
+ * Score how well a Kalshi market title matches search keywords.
+ * Higher score = better match. Returns 0 if no overlap.
+ */
+function scoreMatch(kalshiTitle: string, searchWords: string[]): number {
+  const lower = kalshiTitle.toLowerCase();
+  let score = 0;
+  for (const word of searchWords) {
+    if (lower.includes(word.toLowerCase())) {
+      score += word.length; // longer word matches are worth more
+    }
+  }
+  return score;
+}
+
+/**
+ * Search Kalshi for a market matching a Polymarket title.
+ * Uses GET /events with nested markets, then fuzzy-matches titles.
+ *
+ * Returns: { market, searched, queries } or null
+ */
+export async function searchMarketByTitle(
+  polymarketTitle: string,
+  apiKey: string,
+  privateKey: string
+): Promise<{
+  market: KalshiMarket | null;
+  searched: boolean;
+  queries: string[];
+  candidateCount: number;
+  bestScore: number;
+  debug: string[];
+}> {
+  const debugLog: string[] = [];
+  const queries = extractKeywords(polymarketTitle);
+  debugLog.push(`Title: "${polymarketTitle}"`);
+  debugLog.push(`Keywords: ${JSON.stringify(queries)}`);
+
+  if (queries.length === 0) {
+    debugLog.push("No keywords extracted");
+    return { market: null, searched: false, queries, candidateCount: 0, bestScore: 0, debug: debugLog };
+  }
+
+  // Fetch open events with nested markets (up to 200)
+  let allMarkets: KalshiMarket[] = [];
+  try {
+    const data = await kalshiFetch<{
+      events: KalshiEvent[];
+      markets?: KalshiMarket[];
+    }>({
+      method: "GET",
+      path: "/events?status=open&with_nested_markets=true&limit=200",
+      apiKey,
+      privateKey,
+    });
+
+    // Markets can be nested inside events OR as top-level field
+    if (data.markets && data.markets.length > 0) {
+      allMarkets = data.markets;
+    } else if (data.events) {
+      for (const evt of data.events) {
+        if (evt.markets) allMarkets.push(...evt.markets);
+      }
+    }
+    debugLog.push(`Fetched ${allMarkets.length} markets from ${data.events?.length ?? 0} events`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    debugLog.push(`Events fetch failed: ${msg}`);
+    return { market: null, searched: true, queries, candidateCount: 0, bestScore: 0, debug: debugLog };
+  }
+
+  // Score all markets against each keyword variation
+  const searchWords = queries[0].split(/\s+/); // use most complete keyword set
+  let bestMarket: KalshiMarket | null = null;
+  let bestScore = 0;
+
+  for (const m of allMarkets) {
+    if (m.status !== "open") continue;
+    const s = scoreMatch(m.title ?? "", searchWords);
+    if (s > bestScore) {
+      bestScore = s;
+      bestMarket = m;
+    }
+  }
+
+  if (bestMarket) {
+    debugLog.push(`Best match: "${bestMarket.title}" (ticker: ${bestMarket.ticker}, score: ${bestScore})`);
+  } else {
+    debugLog.push(`No match found among ${allMarkets.length} markets`);
+  }
+
+  return {
+    market: bestMarket,
+    searched: true,
+    queries,
+    candidateCount: allMarkets.length,
+    bestScore,
+    debug: debugLog,
+  };
+}
+
 /**
  * Verify Kalshi auth is working by fetching balance.
  * Returns { ok, balance, error } for diagnostics.

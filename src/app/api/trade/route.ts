@@ -1,7 +1,7 @@
 // ============================================================================
 // PolyBot — Trade Execution API (Sprint 6 → Sprint 7 fix)
 // POST /api/trade
-// Step-by-step: kill switch → auth → balance → size → order → save → alert
+// Step-by-step: kill switch → auth → balance → size → find ticker → order
 // Edge runtime compatible
 // ============================================================================
 
@@ -9,6 +9,7 @@ import { getServiceSupabase } from "@/lib/supabase";
 import {
   getBalance,
   getMarketByTicker,
+  searchMarketByTitle,
   placeLimitOrder,
 } from "@/lib/kalshi";
 import { sendTradeAlert, sendKillSwitchAlert } from "@/lib/telegram";
@@ -32,6 +33,8 @@ interface TradeRequestBody {
     market_title?: string;
   };
   marketTicker: string;
+  /** Market title from Polymarket — used to fuzzy-search Kalshi */
+  marketTitle?: string;
   paperTrade: boolean;
 }
 
@@ -42,16 +45,17 @@ export async function POST(request: Request) {
     // ---- 0. Parse body ----
     debug.step = "parse-body";
     const body = (await request.json()) as TradeRequestBody;
-    const { signal, marketTicker, paperTrade } = body;
+    const { signal, marketTicker, marketTitle, paperTrade } = body;
 
     debug.marketTicker = marketTicker;
+    debug.marketTitle = marketTitle;
     debug.paperTrade = paperTrade;
     debug.consensus = signal?.consensus;
     debug.confidence = signal?.confidence;
 
-    if (!signal || !marketTicker) {
+    if (!signal) {
       return Response.json(
-        { ok: false, error: "Missing signal or marketTicker", debug },
+        { ok: false, error: "Missing signal", debug },
         { status: 400 }
       );
     }
@@ -119,7 +123,6 @@ export async function POST(request: Request) {
       } catch (balErr) {
         debug.balanceError =
           balErr instanceof Error ? balErr.message : String(balErr);
-        // Fall back to max
         tradeSize = MAX_TRADE_SIZE;
       }
     }
@@ -136,31 +139,66 @@ export async function POST(request: Request) {
     const count = Math.max(1, Math.floor(tradeSize));
     debug.count = count;
 
-    // ---- 5. Verify ticker exists on Kalshi (live only) ----
-    debug.step = "verify-ticker";
-    let resolvedTicker = marketTicker;
+    // ---- 5. Resolve Kalshi ticker ----
+    // Strategy: try exact ticker first, then fuzzy search by title
+    debug.step = "resolve-ticker";
+    let resolvedTicker: string | null = null;
 
     if (!paperTrade && kalshiApiKey && kalshiPrivateKey) {
+      // 5a. Try exact ticker lookup (in case marketTicker IS a Kalshi ticker)
       try {
-        const market = await getMarketByTicker(
+        const exact = await getMarketByTicker(
           marketTicker,
           kalshiApiKey,
           kalshiPrivateKey
         );
-        if (market) {
-          resolvedTicker = market.ticker;
-          debug.tickerVerified = true;
-          debug.kalshiMarketTitle = market.title;
-        } else {
-          debug.tickerVerified = false;
-          debug.tickerError = `Ticker "${marketTicker}" not found on Kalshi`;
+        if (exact) {
+          resolvedTicker = exact.ticker;
+          debug.tickerMethod = "exact-match";
+          debug.kalshiMarketTitle = exact.title;
         }
-      } catch (tickerErr) {
-        debug.tickerError =
-          tickerErr instanceof Error ? tickerErr.message : String(tickerErr);
-        // Continue with original ticker — let the order call fail with a
-        // useful error rather than blocking here
+      } catch {
+        // Not found — continue to title search
       }
+
+      // 5b. If exact failed, search by market title
+      if (!resolvedTicker && marketTitle) {
+        debug.step = "search-by-title";
+        const searchResult = await searchMarketByTitle(
+          marketTitle,
+          kalshiApiKey,
+          kalshiPrivateKey
+        );
+        debug.searchResult = {
+          queries: searchResult.queries,
+          candidateCount: searchResult.candidateCount,
+          bestScore: searchResult.bestScore,
+          log: searchResult.debug,
+        };
+
+        if (searchResult.market && searchResult.bestScore > 10) {
+          resolvedTicker = searchResult.market.ticker;
+          debug.tickerMethod = "title-search";
+          debug.kalshiMarketTitle = searchResult.market.title;
+        }
+      }
+
+      // 5c. If still no match → block the trade
+      if (!resolvedTicker) {
+        debug.tickerMethod = "not-found";
+        return Response.json(
+          {
+            ok: false,
+            error: "Market not on Kalshi — trade manually",
+            kalshiSearched: true,
+            debug,
+          },
+          { status: 404 }
+        );
+      }
+    } else {
+      // Paper trade — use whatever ticker was sent
+      resolvedTicker = marketTicker;
     }
 
     debug.resolvedTicker = resolvedTicker;
@@ -204,7 +242,7 @@ export async function POST(request: Request) {
       status: "open",
       notes: orderResult.paperTrade
         ? `PAPER: ${orderResult.orderId}`
-        : `LIVE: ${orderResult.orderId}`,
+        : `LIVE: ${orderResult.orderId} | ${resolvedTicker}`,
     };
 
     const { error: tradeErr } = await getServiceSupabase()
@@ -214,7 +252,6 @@ export async function POST(request: Request) {
     if (tradeErr) {
       debug.supabaseError = tradeErr.message;
       console.error("[trade] Supabase save failed:", tradeErr.message);
-      // Don't fail — the order was already placed
     } else {
       debug.supabaseSaved = true;
     }
