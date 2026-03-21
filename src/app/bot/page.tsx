@@ -684,6 +684,7 @@ export default function BotDashboard() {
   });
   const [balanceData, setBalanceData] = useState<BalanceData | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [marketFilter, setMarketFilter] = useState<"all" | "exec" | "live" | "no_trade">("all");
 
   // Track which markets we've already sent to swarm (avoid duplicate calls)
   const [analyzedIds, setAnalyzedIds] = useState<Set<string>>(new Set());
@@ -1177,6 +1178,51 @@ export default function BotDashboard() {
             <p style={{ fontSize: 11, color: "rgba(148,163,184,0.6)", marginBottom: 8 }}>
               EXEC shown when confidence &ge; 67% and gap &ge; 10%
             </p>
+            {/* Filter tabs */}
+            {(() => {
+              const execCount = markets.filter((m) => {
+                const sig = signals.find((s) => s.market_id === m.id);
+                return sig && (sig.consensus === "YES" || sig.consensus === "NO");
+              }).length;
+              const noTradeCount = markets.filter((m) => {
+                const sig = signals.find((s) => s.market_id === m.id);
+                return sig && sig.consensus !== "YES" && sig.consensus !== "NO";
+              }).length;
+              const liveCount = markets.filter((m) => {
+                const sig = signals.find((s) => s.market_id === m.id);
+                return !sig;
+              }).length;
+              const tabs: { key: "all" | "exec" | "live" | "no_trade"; label: string; count: number }[] = [
+                { key: "all", label: "All", count: markets.length },
+                { key: "exec", label: "EXEC", count: execCount },
+                { key: "live", label: "LIVE", count: liveCount },
+                { key: "no_trade", label: "NO_TRADE", count: noTradeCount },
+              ];
+              return (
+                <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+                  {tabs.map((tab) => (
+                    <button
+                      key={tab.key}
+                      onClick={() => setMarketFilter(tab.key)}
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        padding: "4px 10px",
+                        borderRadius: 6,
+                        border: "none",
+                        cursor: "pointer",
+                        background: marketFilter === tab.key ? "rgba(99,102,241,0.2)" : "transparent",
+                        color: marketFilter === tab.key ? "#f8fafc" : "rgba(148,163,184,0.6)",
+                        borderBottom: marketFilter === tab.key ? "2px solid #6366f1" : "2px solid transparent",
+                        transition: "all 0.15s",
+                      }}
+                    >
+                      {tab.label} ({tab.count})
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
             <Card>
               {markets.length === 0 ? (
                 <p style={{ color: css.textSecondary, textAlign: "center", padding: 24, fontSize: 13 }}>
@@ -1203,21 +1249,38 @@ export default function BotDashboard() {
                     <span style={{ width: 72, textAlign: "center" }}>Signal</span>
                     <span style={{ width: 50, textAlign: "right" }}>Conf</span>
                   </div>
-                  {/* Market rows */}
+                  {/* Market rows — filtered by active tab */}
                   <div style={{ maxHeight: 340, overflowY: "auto" }}>
-                    {markets.map((m) => {
-                      // Find latest signal for this market
-                      const latestSignal = signals.find((s) => s.market_id === m.id);
-                      return (
-                        <MarketRowItem
-                          key={m.id}
-                          market={m}
-                          signal={latestSignal}
-                          isPaper={paperMode}
-                          onExecute={handleExecute}
-                        />
-                      );
-                    })}
+                    {(() => {
+                      const filtered = markets.filter((m) => {
+                        if (marketFilter === "all") return true;
+                        const sig = signals.find((s) => s.market_id === m.id);
+                        if (marketFilter === "exec") return sig && (sig.consensus === "YES" || sig.consensus === "NO");
+                        if (marketFilter === "live") return !sig;
+                        if (marketFilter === "no_trade") return sig && sig.consensus !== "YES" && sig.consensus !== "NO";
+                        return true;
+                      });
+                      const capped = marketFilter === "all" ? filtered.slice(0, 20) : filtered;
+                      if (capped.length === 0) {
+                        return (
+                          <p style={{ color: css.textSecondary, textAlign: "center", padding: 16, fontSize: 12 }}>
+                            No markets match this filter
+                          </p>
+                        );
+                      }
+                      return capped.map((m) => {
+                        const latestSignal = signals.find((s) => s.market_id === m.id);
+                        return (
+                          <MarketRowItem
+                            key={m.id}
+                            market={m}
+                            signal={latestSignal}
+                            isPaper={paperMode}
+                            onExecute={handleExecute}
+                          />
+                        );
+                      });
+                    })()}
                   </div>
                 </div>
               )}
