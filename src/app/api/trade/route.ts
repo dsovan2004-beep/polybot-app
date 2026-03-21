@@ -118,8 +118,10 @@ export async function POST(request: Request) {
       );
     }
 
-    const count = Math.max(1, Math.floor(tradeSize));
+    const pricePerContract = price / 100; // convert cents to dollars
+    const count = Math.max(1, Math.floor(tradeSize / pricePerContract));
     debug.count = count;
+    debug.pricePerContract = pricePerContract;
 
     // ---- 5. Place order (ticker comes directly from Kalshi feed) ----
     debug.step = "place-order";
