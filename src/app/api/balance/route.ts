@@ -6,6 +6,7 @@
 // ============================================================================
 
 import { getBalance, getPositions, getMarketByTicker } from "@/lib/kalshi";
+import { getServiceSupabase } from "@/lib/supabase";
 
 export const runtime = "edge";
 
@@ -118,6 +119,33 @@ export async function GET() {
       })
     );
 
+    // Compute P&L stats from Kalshi positions + Supabase trades
+    debug.step = "computing-pnl";
+    // Realized P&L from Kalshi positions (sum of realized_pnl_dollars)
+    const realizedPnl = enrichedPositions.reduce((sum, p) => {
+      const raw = p as Record<string, unknown>;
+      return sum + parseFloat(String(raw.realized_pnl_dollars ?? "0"));
+    }, 0);
+
+    // Win rate from Supabase trades table (resolved trades only)
+    let tradesCount = 0;
+    let wins = 0;
+    try {
+      const { data: trades } = await getServiceSupabase()
+        .from("trades")
+        .select("pnl, status")
+        .neq("status", "open");
+      if (trades && trades.length > 0) {
+        tradesCount = trades.length;
+        wins = trades.filter((t: { pnl: number | null }) => (t.pnl ?? 0) > 0).length;
+      }
+    } catch { /* trades query optional — don't block response */ }
+
+    const winRate = tradesCount > 0 ? wins / tradesCount : 0;
+    debug.realizedPnl = realizedPnl;
+    debug.tradesCount = tradesCount;
+    debug.wins = wins;
+
     debug.step = "done";
     debug.finalBalance = balance;
     debug.openPositions = openPositions;
@@ -128,6 +156,10 @@ export async function GET() {
         kalshi: Math.round(balance * 100) / 100,
         openPositions,
         positions: enrichedPositions,
+        totalPnl: Math.round(realizedPnl * 100) / 100,
+        winRate,
+        tradesCount,
+        wins,
         totalValue:
           Math.round((balance + positionExposure / 100) * 100) / 100,
         paperMode: false,

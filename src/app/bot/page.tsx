@@ -116,6 +116,10 @@ interface BalanceData {
   kalshi: number;
   openPositions: number;
   positions: KalshiPositionRow[];
+  totalPnl: number;
+  winRate: number;
+  tradesCount: number;
+  wins: number;
   totalValue: number;
   paperMode: boolean;
 }
@@ -1008,12 +1012,12 @@ export default function BotDashboard() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
           <StatCard
             label="Total P&L"
-            value={fmt$(0)}
-            color={pnlColor(0)}
+            value={fmt$(balanceData?.totalPnl ?? 0)}
+            color={pnlColor(balanceData?.totalPnl ?? 0)}
           />
           <StatCard
             label="Win Rate"
-            value={fmtPct(0)}
+            value={balanceData?.tradesCount ? `${fmtPct(balanceData.winRate)} (${balanceData.wins}/${balanceData.tradesCount})` : "No trades yet"}
           />
           <StatCard
             label="Signals Today"
