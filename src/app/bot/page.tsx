@@ -1043,6 +1043,40 @@ export default function BotDashboard() {
           </div>
         )}
 
+        {/* ── RISK SUMMARY BAR ── */}
+        {balanceData && balanceData.positions.length > 0 && (() => {
+          const totalExposure = balanceData.positions.reduce(
+            (sum, p) => sum + Math.abs(p.market_exposure / 100), 0
+          );
+          const pctDeployed = balanceData.kalshi > 0 ? (totalExposure / balanceData.kalshi) * 100 : 0;
+          const posCount = balanceData.positions.length;
+          const largest = balanceData.positions.reduce(
+            (max, p) => {
+              const exp = Math.abs(p.market_exposure / 100);
+              return exp > max.exp ? { exp, title: p.title || p.ticker } : max;
+            },
+            { exp: 0, title: "" }
+          );
+          const riskColor = pctDeployed > 50 ? "#f87171" : pctDeployed > 25 ? "#fbbf24" : "#4ade80";
+          return (
+            <div
+              style={{
+                padding: "8px 16px",
+                marginBottom: 12,
+                borderRadius: 8,
+                border: `0.5px solid ${riskColor}33`,
+                background: `${riskColor}0d`,
+                fontSize: 12,
+                color: riskColor,
+                fontFamily: "monospace",
+                textAlign: "center",
+              }}
+            >
+              RISK: {fmt$(totalExposure)} deployed ({pctDeployed.toFixed(1)}% of balance) across {posCount} position{posCount !== 1 ? "s" : ""} | Largest: {fmt$(largest.exp)} ({largest.title.slice(0, 20)})
+            </div>
+          );
+        })()}
+
         {/* ── LIVE MODE WARNING ── */}
         {!paperMode && !killSwitchActive && (
           <div
