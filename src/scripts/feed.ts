@@ -511,7 +511,7 @@ async function pollKalshi(): Promise<void> {
     const data = await kalshiFetch<{
       events: KalshiEvent[];
       markets?: KalshiMarketFromAPI[];
-    }>("GET", "/events?status=open&with_nested_markets=true&limit=200");
+    }>("GET", "/events?status=open&with_nested_markets=true&limit=1000");
 
     // Collect all markets from events
     let allMarkets: KalshiMarketFromAPI[] = [];
@@ -551,20 +551,7 @@ async function pollKalshi(): Promise<void> {
       // Accept both "open" and "active" as valid tradeable statuses
       if (m.status !== "open" && m.status !== "active") { skippedStatus++; continue; }
 
-      // Expiry filter — skip markets expiring beyond 90 days or past 2027
-      const expiryRaw = (m.close_time ?? m.expiration_time ?? m.end_date_iso ?? "") as string;
-      if (expiryRaw) {
-        const expiryDate = new Date(expiryRaw);
-        if (!isNaN(expiryDate.getTime())) {
-          const now = new Date();
-          const daysUntilExpiry = (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
-          if (daysUntilExpiry > 90 || expiryDate.getFullYear() > 2028) {
-            skippedExpiry++;
-            totalFiltered++;
-            continue;
-          }
-        }
-      }
+      // Expiry filter — REMOVED (let all active markets through)
 
       // Long-horizon title filter — skip speculative far-future markets
       const titleLower = m.title.toLowerCase();
