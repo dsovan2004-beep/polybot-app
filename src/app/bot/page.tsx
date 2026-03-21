@@ -285,7 +285,7 @@ function Btc5MinPanel({ data }: { data: Btc5MinData | null }) {
               display: "inline-block",
             }}
           />
-          <span style={{ fontSize: 12, color: isActive ? "#4ade80" : "#64748b", fontWeight: 500 }}>
+          <span style={{ fontSize: 12, color: isActive ? "#4ade80" : "#94a3b8", fontWeight: 500 }}>
             {isActive ? "SIGNAL ACTIVE" : "WATCHING"}
           </span>
         </div>
@@ -353,15 +353,15 @@ function Btc5MinPanel({ data }: { data: Btc5MinData | null }) {
 function SignalCard({ signal, markets }: { signal: SignalRow; markets: MarketRow[] }) {
   const consensus = signal.consensus ?? "NO_TRADE";
   const badgeColor =
-    consensus === "YES" ? "#4ade80" : consensus === "NO" ? "#f87171" : "#64748b";
+    consensus === "YES" ? "#4ade80" : consensus === "NO" ? "#f87171" : "#94a3b8";
   const badgeBg =
     consensus === "YES"
       ? "rgba(74,222,128,0.1)"
       : consensus === "NO"
       ? "rgba(248,113,113,0.1)"
-      : "rgba(100,116,139,0.1)";
+      : "rgba(148,163,184,0.1)";
   const borderLeft =
-    consensus === "YES" || consensus === "NO" ? css.indigo : "#64748b";
+    consensus === "YES" || consensus === "NO" ? css.indigo : "#94a3b8";
 
   const confidence = signal.confidence ?? 0;
   const confidencePct = Math.min(100, confidence);
@@ -482,13 +482,13 @@ function MarketRowItem({
   const confidence = signal?.confidence ?? null;
 
   const badgeColor =
-    vote === "YES" ? "#4ade80" : vote === "NO" ? "#f87171" : "#64748b";
+    vote === "YES" ? "#4ade80" : vote === "NO" ? "#f87171" : "#94a3b8";
   const badgeBg =
     vote === "YES"
       ? "rgba(74,222,128,0.1)"
       : vote === "NO"
       ? "rgba(248,113,113,0.1)"
-      : "rgba(100,116,139,0.1)";
+      : "rgba(148,163,184,0.1)";
 
   return (
     <div
@@ -918,7 +918,7 @@ export default function BotDashboard() {
           {balanceData && (() => {
             const alertAt = balanceData.lastAlertAt;
             if (!alertAt) return (
-              <span style={{ fontSize: 11, color: "#64748b", fontFamily: "monospace" }}>
+              <span style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace" }}>
                 No alerts yet
               </span>
             );
@@ -1140,7 +1140,7 @@ export default function BotDashboard() {
             border: "0.5px solid rgba(148,163,184,0.12)",
             background: "rgba(148,163,184,0.04)",
             fontSize: 11,
-            color: "rgba(148,163,184,0.55)",
+            color: "#94a3b8",
             fontFamily: "monospace",
           }}
         >
@@ -1243,7 +1243,7 @@ export default function BotDashboard() {
               Markets &amp; Signals ({markets.length})
               {connected && <span style={{ color: "#4ade80", marginLeft: 8, fontSize: 10 }}>WS CONNECTED</span>}
             </p>
-            <p style={{ fontSize: 11, color: "rgba(148,163,184,0.6)", marginBottom: 8 }}>
+            <p style={{ fontSize: 11, color: "#94a3b8", marginBottom: 8 }}>
               EXEC shown when confidence &ge; 67% and gap &ge; 10%
             </p>
             {/* Filter tabs */}
@@ -1280,7 +1280,7 @@ export default function BotDashboard() {
                         border: "none",
                         cursor: "pointer",
                         background: marketFilter === tab.key ? "rgba(99,102,241,0.2)" : "transparent",
-                        color: marketFilter === tab.key ? "#f8fafc" : "rgba(148,163,184,0.6)",
+                        color: marketFilter === tab.key ? "#f8fafc" : "#94a3b8",
                         borderBottom: marketFilter === tab.key ? "2px solid #6366f1" : "2px solid transparent",
                         transition: "all 0.15s",
                       }}
