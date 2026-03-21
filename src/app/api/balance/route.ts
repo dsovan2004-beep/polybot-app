@@ -78,21 +78,35 @@ export async function GET() {
       0
     );
 
-    // Enrich positions with market titles + safe numeric defaults
+    // Enrich positions with market titles — pass through ALL raw Kalshi fields
     debug.step = "enriching-positions";
+    // Log first raw position for debugging
+    if (positions.length > 0) {
+      debug.rawPositionSample = positions[0];
+      debug.rawPositionKeys = Object.keys(positions[0] as unknown as Record<string, unknown>);
+    }
     const enrichedPositions = await Promise.all(
-      positions.map(async (pos) => {
+      positions.map(async (pos, idx) => {
+        // Cast to access ALL runtime fields (Kalshi returns more than our TS interface)
+        const raw = pos as unknown as Record<string, unknown>;
         let title = pos.ticker;
         try {
           const mkt = await getMarketByTicker(pos.ticker, apiKey!, privateKey!);
-          if (mkt?.title) title = mkt.title;
+          // Kalshi wraps: { market: { title, ... } } — must unwrap
+          const mktRaw = mkt as unknown as Record<string, unknown>;
+          const mktInner = ((mktRaw?.market as Record<string, unknown>) ?? mktRaw) as Record<string, unknown> | null;
+          if (idx === 0) {
+            debug.rawMarketResponse = mktRaw;
+            debug.rawMarketInner = mktInner;
+            debug.rawMarketKeys = mktInner ? Object.keys(mktInner) : [];
+          }
+          const t = mktInner?.title ?? mktInner?.subtitle ?? mktInner?.question;
+          if (t) title = String(t);
         } catch { /* keep ticker as fallback */ }
+        // Spread ALL raw fields so frontend gets whatever Kalshi returns
         return {
-          ticker: pos.ticker,
+          ...raw,
           title,
-          market_exposure: typeof pos.market_exposure === "number" ? pos.market_exposure : 0,
-          resting_orders_count: pos.resting_orders_count ?? 0,
-          total_traded: pos.total_traded ?? 0,
         };
       })
     );
