@@ -313,14 +313,36 @@ export async function placeLimitOrder(
         privateKey,
       });
       const mktData = (mkt.market ?? mkt) as Record<string, unknown>;
+      console.log(`[kalshi] Market data keys: ${Object.keys(mktData).join(", ")}`);
+      console.log(`[kalshi] Market prices: yes_ask=${mktData.yes_ask} no_ask=${mktData.no_ask} yes_ask_dollars=${mktData.yes_ask_dollars} no_ask_dollars=${mktData.no_ask_dollars}`);
+
       if (params.side === "yes") {
-        const ask = mktData.yes_ask as number | undefined;
-        if (ask && ask > 0) livePrice = ask;
+        // Prefer dollar field (convert to cents), fall back to cents field
+        const askDollars = mktData.yes_ask_dollars as number | undefined;
+        const askCents = mktData.yes_ask as number | undefined;
+        if (askDollars && askDollars > 0) {
+          livePrice = Math.round(askDollars * 100);
+        } else if (askCents && askCents > 0) {
+          livePrice = askCents;
+        }
       } else {
-        const ask = mktData.no_ask as number | undefined;
-        if (ask && ask > 0) livePrice = ask;
+        // Prefer dollar field (convert to cents), fall back to cents field
+        const askDollars = mktData.no_ask_dollars as number | undefined;
+        const askCents = mktData.no_ask as number | undefined;
+        if (askDollars && askDollars > 0) {
+          livePrice = Math.round(askDollars * 100);
+        } else if (askCents && askCents > 0) {
+          livePrice = askCents;
+        }
       }
-      console.log(`[kalshi] Live ask for ${params.side.toUpperCase()}: ${livePrice}c (was ${params.price}c)`);
+
+      // If price didn't change from passed-in, bump +1c above to ensure fill
+      if (livePrice === params.price) {
+        livePrice = Math.min(99, livePrice + 1);
+        console.log(`[kalshi] No better ask found, bumping to ${livePrice}c to ensure fill`);
+      }
+
+      console.log(`[kalshi] Final ${params.side.toUpperCase()} price: ${livePrice}c (was ${params.price}c)`);
     } catch (mktErr) {
       console.warn(`[kalshi] Could not fetch live ask, using passed price ${params.price}c:`, mktErr instanceof Error ? mktErr.message : String(mktErr));
     }
