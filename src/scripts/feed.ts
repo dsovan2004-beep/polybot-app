@@ -391,7 +391,8 @@ async function analyzeMarket(
   yesPrice: number,
   volume: number,
   expirationRaw: string,
-  btcPrice: string
+  btcPrice: string,
+  memoryContext: string = ""
 ): Promise<void> {
   if (killSwitchActive || !anthropic) return;
   if (analyzedMarkets.has(kalshiTicker)) return;
@@ -413,7 +414,7 @@ async function analyzeMarket(
     }
 
     const userPrompt = `Today is ${todayStr}.${expiryContext}
-
+${memoryContext}
 Market: ${title}
 Kalshi Ticker: ${kalshiTicker}
 Category: ${category}
@@ -525,6 +526,79 @@ What is your analysis?`;
 }
 
 // ---------------------------------------------------------------------------
+// Memory context — positions + trade history for Claude awareness
+// ---------------------------------------------------------------------------
+
+async function buildMemoryContext(): Promise<string> {
+  const lines: string[] = [];
+  try {
+    // Layer 1 — Open positions from Kalshi
+    try {
+      const posData = await kalshiFetch<{ market_positions: { ticker: string; market_exposure_dollars: string; position_fp: string }[] }>(
+        "GET",
+        "/portfolio/positions?settlement_status=unsettled&limit=20"
+      );
+      const positions = posData.market_positions ?? [];
+      if (positions.length > 0) {
+        lines.push("YOUR OPEN POSITIONS (do NOT re-enter these markets):");
+        for (const p of positions.slice(0, 5)) {
+          const side = parseFloat(String(p.position_fp)) < 0 ? "NO" : "YES";
+          const exposure = parseFloat(String(p.market_exposure_dollars ?? "0")).toFixed(2);
+          lines.push(`- ${side} on ${p.ticker} — $${exposure} exposure`);
+        }
+      }
+    } catch (posErr) {
+      console.log(`  ⚠️  Memory: positions fetch failed (continuing): ${posErr instanceof Error ? posErr.message : String(posErr)}`);
+    }
+
+    // Layer 2 — Recent losses from Supabase trades
+    try {
+      const { data: losses } = await supabase
+        .from("trades")
+        .select("market_title, strategy, confidence, pnl")
+        .lt("pnl", 0)
+        .order("created_at", { ascending: false })
+        .limit(5);
+      if (losses && losses.length > 0) {
+        if (lines.length > 0) lines.push("");
+        lines.push("RECENT LOSSES (be more cautious on similar markets):");
+        for (const t of losses) {
+          const title = (t.market_title ?? "unknown").slice(0, 50);
+          lines.push(`- Lost $${Math.abs(t.pnl).toFixed(2)} on "${title}", strategy: ${t.strategy ?? "unknown"}, conf: ${t.confidence ?? "?"}%`);
+        }
+      }
+    } catch {
+      // Silent — no trades table or no losses is fine
+    }
+
+    // Layer 3 — Winning patterns from Supabase trades
+    try {
+      const { data: wins } = await supabase
+        .from("trades")
+        .select("market_title, strategy, confidence, pnl")
+        .gt("pnl", 0)
+        .order("created_at", { ascending: false })
+        .limit(5);
+      if (wins && wins.length > 0) {
+        if (lines.length > 0) lines.push("");
+        lines.push("WINNING PATTERNS (prioritize similar setups):");
+        for (const t of wins) {
+          const title = (t.market_title ?? "unknown").slice(0, 50);
+          lines.push(`- Won $${t.pnl.toFixed(2)} on "${title}", strategy: ${t.strategy ?? "unknown"}, conf: ${t.confidence ?? "?"}%`);
+        }
+      }
+    } catch {
+      // Silent — no wins is fine
+    }
+  } catch {
+    // Total failure — return empty, don't break the feed
+  }
+
+  if (lines.length === 0) return "";
+  return `\n--- PORTFOLIO MEMORY (do NOT ignore) ---\n${lines.join("\n")}\n--- END PORTFOLIO MEMORY ---\n`;
+}
+
+// ---------------------------------------------------------------------------
 // Kalshi polling loop
 // ---------------------------------------------------------------------------
 
@@ -544,6 +618,12 @@ async function pollKalshi(): Promise<void> {
       }
     } catch {
       console.warn("  ⚠️  BTC price fetch failed — continuing without it");
+    }
+
+    // Build memory context once per poll cycle (positions + trade history)
+    const memoryContext = await buildMemoryContext();
+    if (memoryContext) {
+      console.log(`  🧠 Memory context loaded (${memoryContext.split("\n").length - 2} lines)`);
     }
 
     // Fetch multiple categories — priority series first, then general
@@ -687,7 +767,8 @@ async function pollKalshi(): Promise<void> {
         yesPrice,
         vol24h,
         expirationRaw,
-        btcPrice
+        btcPrice,
+        memoryContext
       );
     }
 
