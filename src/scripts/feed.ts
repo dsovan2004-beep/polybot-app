@@ -558,7 +558,7 @@ async function pollKalshi(): Promise<void> {
         if (!isNaN(expiryDate.getTime())) {
           const now = new Date();
           const daysUntilExpiry = (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
-          if (daysUntilExpiry > 365 || expiryDate.getFullYear() > 2028) {
+          if (daysUntilExpiry > 30 || expiryDate.getFullYear() > 2028) {
             skippedExpiry++;
             totalFiltered++;
             continue;
