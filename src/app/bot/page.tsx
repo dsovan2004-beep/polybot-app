@@ -1131,6 +1131,22 @@ export default function BotDashboard() {
           </div>
         )}
 
+        {/* ── GUARDRAILS STATUS ── */}
+        <div
+          style={{
+            padding: "6px 16px",
+            marginBottom: 12,
+            borderRadius: 8,
+            border: "0.5px solid rgba(148,163,184,0.12)",
+            background: "rgba(148,163,184,0.04)",
+            fontSize: 11,
+            color: "rgba(148,163,184,0.55)",
+            fontFamily: "monospace",
+          }}
+        >
+          GUARDRAILS: 8 active | Min conf: 67% | Min gap: 10% | Price: 2¢–98¢ | Vol: 500+ | Kill: −20% | No sports | No same-day expiry
+        </div>
+
         {/* ── 4 STAT CARDS ── */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
           <StatCard
