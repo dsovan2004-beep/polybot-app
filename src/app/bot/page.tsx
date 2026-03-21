@@ -352,6 +352,7 @@ function Btc5MinPanel({ data }: { data: Btc5MinData | null }) {
 // ---------------------------------------------------------------------------
 
 function SignalCard({ signal, markets }: { signal: SignalRow; markets: MarketRow[] }) {
+  const [expanded, setExpanded] = useState(false);
   const consensus = signal.consensus ?? "NO_TRADE";
   const badgeColor =
     consensus === "YES" ? "#4ade80" : consensus === "NO" ? "#f87171" : "#94a3b8";
@@ -384,6 +385,7 @@ function SignalCard({ signal, markets }: { signal: SignalRow; markets: MarketRow
 
   return (
     <div
+      onClick={() => setExpanded((prev) => !prev)}
       style={{
         borderLeft: `3px solid ${borderLeft}`,
         borderRadius: css.radius,
@@ -392,19 +394,36 @@ function SignalCard({ signal, markets }: { signal: SignalRow; markets: MarketRow
         borderLeftColor: borderLeft,
         padding: "12px 16px",
         marginBottom: 8,
+        cursor: "pointer",
+        transition: "background 0.15s",
       }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(148,163,184,0.05)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <p style={{ fontSize: 13, color: css.textPrimary, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {marketTitle}
           </p>
-          <p style={{ fontSize: 11, color: css.textSecondary, marginTop: 2 }}>
-            {fmtTime(signal.created_at)}
-            {signal.reasoning && (
-              <span style={{ marginLeft: 8 }}>— {signal.reasoning.slice(0, 60)}</span>
-            )}
-          </p>
+          {signal.reasoning ? (
+            <p style={{
+              fontSize: 11,
+              color: css.textSecondary,
+              marginTop: 2,
+              overflow: expanded ? "visible" : "hidden",
+              whiteSpace: expanded ? "normal" : "nowrap",
+              textOverflow: expanded ? "unset" : "ellipsis",
+              lineHeight: 1.4,
+            }}>
+              {fmtTime(signal.created_at)} — {expanded ? signal.reasoning : signal.reasoning.slice(0, 60)}
+              {!expanded && signal.reasoning.length > 60 && "..."}
+              <span style={{ marginLeft: 6, fontSize: 10, color: "#94a3b8" }}>{expanded ? "▴" : "▾"}</span>
+            </p>
+          ) : (
+            <p style={{ fontSize: 11, color: css.textSecondary, marginTop: 2 }}>
+              {fmtTime(signal.created_at)}
+            </p>
+          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           <span
