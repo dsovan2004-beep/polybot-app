@@ -508,23 +508,48 @@ async function pollKalshi(): Promise<void> {
   console.log(`\n🔄 Poll #${totalPolled} — fetching Kalshi events...`);
 
   try {
-    const data = await kalshiFetch<{
-      events: KalshiEvent[];
-      markets?: KalshiMarketFromAPI[];
-    }>("GET", "/events?status=open&with_nested_markets=true&limit=200");
+    // Fetch multiple categories — priority series first, then general
+    const endpoints = [
+      "/events?status=open&with_nested_markets=true&limit=200&series_ticker=KXBTC&sort_by=close_time&sort_direction=asc",
+      "/events?status=open&with_nested_markets=true&limit=200&series_ticker=KXFED&sort_by=close_time&sort_direction=asc",
+      "/events?status=open&with_nested_markets=true&limit=200&sort_by=close_time&sort_direction=asc",
+    ];
 
-    // Collect all markets from events
     let allMarkets: KalshiMarketFromAPI[] = [];
-    if (data.markets && data.markets.length > 0) {
-      allMarkets = data.markets;
-    } else if (data.events) {
-      for (const evt of data.events) {
-        if (evt.markets) allMarkets.push(...evt.markets);
+    const seenTickers = new Set<string>();
+    let totalEvents = 0;
+
+    for (const endpoint of endpoints) {
+      try {
+        const data = await kalshiFetch<{
+          events: KalshiEvent[];
+          markets?: KalshiMarketFromAPI[];
+        }>("GET", endpoint);
+
+        let batch: KalshiMarketFromAPI[] = [];
+        if (data.markets && data.markets.length > 0) {
+          batch = data.markets;
+        } else if (data.events) {
+          for (const evt of data.events) {
+            if (evt.markets) batch.push(...evt.markets);
+          }
+          totalEvents += data.events.length;
+        }
+
+        // Dedup across batches
+        for (const m of batch) {
+          if (!seenTickers.has(m.ticker)) {
+            seenTickers.add(m.ticker);
+            allMarkets.push(m);
+          }
+        }
+      } catch (batchErr) {
+        console.warn(`  ⚠️  Batch fetch failed for ${endpoint.slice(0, 60)}:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
       }
     }
 
     totalMarketsFound = allMarkets.length;
-    console.log(`  📦 ${allMarkets.length} markets from ${data.events?.length ?? 0} events`);
+    console.log(`  📦 ${allMarkets.length} markets (deduped) from ${totalEvents} events across ${endpoints.length} queries`);
 
     // Debug: log first market to see actual API shape
     if (allMarkets.length > 0) {
