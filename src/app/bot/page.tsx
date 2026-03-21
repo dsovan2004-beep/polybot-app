@@ -104,9 +104,17 @@ async function fetchBtc5Min(): Promise<Btc5MinData> {
   return json.data;
 }
 
+interface KalshiPositionRow {
+  ticker: string;
+  market_exposure: number;
+  resting_orders_count: number;
+  total_traded: number;
+}
+
 interface BalanceData {
   kalshi: number;
   openPositions: number;
+  positions: KalshiPositionRow[];
   totalValue: number;
   paperMode: boolean;
 }
@@ -1015,6 +1023,68 @@ export default function BotDashboard() {
             value={fmt$(0)}
           />
         </div>
+
+        {/* ── OPEN POSITIONS ── */}
+        {balanceData && balanceData.positions && balanceData.positions.length > 0 && (
+          <div style={{ marginBottom: 24 }}>
+            <p style={{ fontSize: 12, fontWeight: 600, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+              Open Positions ({balanceData.positions.length})
+            </p>
+            <Card>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ borderBottom: `1px solid ${css.border}` }}>
+                    {["Market", "Side", "Exposure", "Resting Orders", "Total Traded"].map((h) => (
+                      <th key={h} style={{ textAlign: "left", padding: "8px 10px", color: css.textSecondary, fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {balanceData.positions.map((pos) => {
+                    const matchedMarket = markets.find(
+                      (m) => (m as MarketRow & { kalshi_ticker?: string }).kalshi_ticker === pos.ticker
+                    );
+                    const title = matchedMarket?.title ?? pos.ticker;
+                    const side = pos.market_exposure >= 0 ? "YES" : "NO";
+                    const exposureAbs = Math.abs(pos.market_exposure) / 100;
+                    const exposureColor = pos.market_exposure >= 0 ? "#4ade80" : "#f87171";
+
+                    return (
+                      <tr key={pos.ticker} style={{ borderBottom: `1px solid ${css.border}` }}>
+                        <td style={{ padding: "10px", color: css.textPrimary, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {title}
+                        </td>
+                        <td style={{ padding: "10px" }}>
+                          <span style={{
+                            fontSize: 11,
+                            fontWeight: 700,
+                            padding: "2px 8px",
+                            borderRadius: 4,
+                            background: side === "YES" ? "rgba(74,222,128,0.15)" : "rgba(248,113,113,0.15)",
+                            color: side === "YES" ? "#4ade80" : "#f87171",
+                          }}>
+                            {side}
+                          </span>
+                        </td>
+                        <td style={{ padding: "10px", color: exposureColor, fontFamily: "monospace", fontWeight: 600 }}>
+                          ${exposureAbs.toFixed(2)}
+                        </td>
+                        <td style={{ padding: "10px", color: css.textSecondary, fontFamily: "monospace" }}>
+                          {pos.resting_orders_count}
+                        </td>
+                        <td style={{ padding: "10px", color: css.textPrimary, fontFamily: "monospace" }}>
+                          {pos.total_traded}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </Card>
+          </div>
+        )}
 
         {/* ── MAIN 2-COLUMN GRID ── */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>

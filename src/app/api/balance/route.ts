@@ -87,6 +87,7 @@ export async function GET() {
       data: {
         kalshi: Math.round(balance * 100) / 100,
         openPositions,
+        positions,
         totalValue:
           Math.round((balance + positionExposure / 100) * 100) / 100,
         paperMode: false,
