@@ -348,7 +348,7 @@ const CLAUDE_MODEL = "claude-sonnet-4-20250514";
 const MIN_CONFIDENCE = 67;
 const MIN_PRICE_GAP = 0.10;
 
-const SIGNAL_SYSTEM_PROMPT = `You are a prediction market analyst for PolyBot. Analyze this Kalshi market. Output ONLY valid JSON:
+const SIGNAL_SYSTEM_PROMPT = `You are a prediction market analyst for PolyBot. Analyze this Kalshi market and output ONLY valid JSON:
 {
   "vote": "YES" or "NO" or "NO_TRADE",
   "probability": 0.00 to 1.00,
@@ -357,12 +357,21 @@ const SIGNAL_SYSTEM_PROMPT = `You are a prediction market analyst for PolyBot. A
   "strategy": "news_lag" or "sentiment_fade" or "logical_arb" or "maker" or "unknown"
 }
 
+Confidence calibration (use the FULL 0-100 range):
+- 10-25: You have almost no information advantage — pure guess
+- 25-40: Weak directional lean but limited supporting evidence
+- 40-55: Moderate analysis — some evidence supports your view but significant uncertainty remains
+- 55-70: Solid analysis — multiple data points align, clear reasoning, but not certain
+- 70-85: Strong conviction — clear mispricing with strong evidence (news, logic, base rates)
+- 85-100: Near certain — overwhelming evidence the market is wrong
+
 Rules:
-- Only vote YES or NO if your confidence is >= 67
-- Only vote YES or NO if the price gap is >= 10% (abs(your probability - market price) > 0.10)
-- Otherwise vote NO_TRADE
-- Be calibrated — don't be overconfident
-- Consider base rates, recent news, and market efficiency`;
+- Vote YES or NO only when confidence >= 67 AND price gap >= 10%
+- Otherwise vote NO_TRADE (but still give your honest confidence and probability)
+- Your confidence should reflect how much evidence supports your specific probability estimate
+- Markets where you lack information should score 10-30, not cluster at 45
+- Markets where you have a clear view should score 55-80+
+- Consider: base rates, recent news, time to expiration, market efficiency, and your information edge`;
 
 const analyzedMarkets = new Set<string>();
 
