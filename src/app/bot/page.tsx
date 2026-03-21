@@ -678,7 +678,7 @@ function WhaleRowItem({ whale, markets }: { whale: WhaleRow; markets: MarketRow[
       <span style={{ fontSize: 13, fontWeight: 600, color: css.textPrimary, fontFamily: "monospace", width: 80, textAlign: "right" }}>
         {fmtK(whale.trade_size_usd)}
       </span>
-      <span style={{ fontSize: 11, color: css.textSecondary, width: 70, textAlign: "right" }}>
+      <span style={{ fontSize: 11, color: css.textSecondary, width: 70, textAlign: "right" }} title={new Date(whale.created_at).toLocaleString()}>
         {timeAgo(whale.created_at)}
       </span>
     </div>
@@ -879,6 +879,7 @@ export default function BotDashboard() {
 
   return (
     <div style={{ minHeight: "100vh", background: css.bg, color: css.textPrimary }}>
+      <style>{`@keyframes livePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
       {/* ── TOP BAR ── */}
       <header
         style={{
@@ -914,7 +915,7 @@ export default function BotDashboard() {
               cursor: "pointer",
             }}
           >
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: paperMode ? "#4ade80" : "#f87171", display: "inline-block" }} />
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: paperMode ? "#4ade80" : "#f87171", display: "inline-block", animation: paperMode ? "none" : "livePulse 1.5s ease-in-out infinite" }} />
             {paperMode ? "PAPER" : "LIVE"}
           </button>
           {balanceData && (
@@ -1216,10 +1217,15 @@ export default function BotDashboard() {
             label="Signals Today"
             value={String(signals.length)}
           />
-          <StatCard
-            label="USDC Rebates"
-            value={fmt$(0)}
-          />
+          <Card>
+            <p style={{ fontSize: 11, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              USDC Rebates
+              <span title="Earned from providing liquidity on executed trades" style={{ fontSize: 10, cursor: "help", marginLeft: 4 }}>ⓘ</span>
+            </p>
+            <p style={{ fontSize: 24, fontWeight: 700, color: css.textPrimary, marginTop: 4 }}>
+              {fmt$(0)}
+            </p>
+          </Card>
         </div>
 
         {/* ── OPEN POSITIONS ── */}
