@@ -381,7 +381,8 @@ async function analyzeMarket(
   category: string,
   yesPrice: number,
   volume: number,
-  expirationRaw: string
+  expirationRaw: string,
+  btcPrice: string
 ): Promise<void> {
   if (killSwitchActive || !anthropic) return;
   if (analyzedMarkets.has(kalshiTicker)) return;
@@ -408,7 +409,7 @@ Market: ${title}
 Kalshi Ticker: ${kalshiTicker}
 Category: ${category}
 Current YES price: ${yesPrice.toFixed(2)} (implied probability: ${(yesPrice * 100).toFixed(1)}%)
-Volume: $${volume.toLocaleString()}
+Volume: $${volume.toLocaleString()}${btcPrice ? `\nCurrent BTC price: $${btcPrice}` : ""}
 
 What is your analysis?`;
 
@@ -523,6 +524,19 @@ async function pollKalshi(): Promise<void> {
   console.log(`\n🔄 Poll #${totalPolled} — fetching Kalshi events...`);
 
   try {
+    // Fetch BTC price once per poll cycle (free, no auth)
+    let btcPrice = "";
+    try {
+      const btcRes = await fetch("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT");
+      if (btcRes.ok) {
+        const btcData = (await btcRes.json()) as { price: string };
+        btcPrice = parseFloat(btcData.price).toFixed(2);
+        console.log(`  ₿ BTC price: $${btcPrice}`);
+      }
+    } catch {
+      console.warn("  ⚠️  BTC price fetch failed — continuing without it");
+    }
+
     // Fetch multiple categories — priority series first, then general
     const endpoints = [
       "/events?status=open&with_nested_markets=true&limit=200&series_ticker=KXBTC&sort_by=close_time&sort_direction=asc",
@@ -591,7 +605,19 @@ async function pollKalshi(): Promise<void> {
       // Accept both "open" and "active" as valid tradeable statuses
       if (m.status !== "open" && m.status !== "active") { skippedStatus++; continue; }
 
-      // Expiry filter — REMOVED (let all active markets through)
+      // Skip markets expiring today (0 days left — no time to trade)
+      const expiryCheckRaw = (m.close_time ?? m.expiration_time ?? m.end_date_iso ?? "") as string;
+      if (expiryCheckRaw) {
+        const expiryCheck = new Date(expiryCheckRaw);
+        if (!isNaN(expiryCheck.getTime())) {
+          const daysLeft = Math.floor((expiryCheck.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+          if (daysLeft <= 0) {
+            skippedExpiry++;
+            totalFiltered++;
+            continue;
+          }
+        }
+      }
 
       // Long-horizon title filter — skip speculative far-future markets
       const titleLower = m.title.toLowerCase();
@@ -651,7 +677,8 @@ async function pollKalshi(): Promise<void> {
         category,
         yesPrice,
         vol24h,
-        expirationRaw
+        expirationRaw,
+        btcPrice
       );
     }
 
