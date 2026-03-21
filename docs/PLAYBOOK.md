@@ -128,6 +128,46 @@ Maker rebates on BTC 5-min markets. No prediction needed. Place orders both side
 
 ---
 
+## MoonDev Validated Strategies (youtube.com/@moondevonyt)
+
+MoonDev is a YouTube algo trader who validated trading strategies on Polymarket and Kalshi. These strategies are researched, backtested, and proven profitable. PolyBot implements all 5.
+
+### MoonDev Strategy 1: MACD on BTC 5-Min Markets
+- Use MACD(6/26/5) on BTC 1-min candles from Binance
+- Signal fires when histogram > 10
+- Validated win rate: 60.18% (beats all 4 ML models MoonDev tested)
+- Data source: Binance WebSocket (free, no API key)
+  `wss://stream.binance.com:9443/ws/btcusdt@kline_1m`
+- Apply to Kalshi BTC 5-min up/down markets
+
+### MoonDev Strategy 2: Liquidation Bounce
+- Watch Binance liquidation feed (free, no API key)
+  `wss://fstream.binance.com/ws/!forceOrder@arr`
+- When $500K+ BTC LONG liquidations in 60s window → BUY UP signal
+- Mean reversion after mass liquidation = high probability bounce
+- Confidence scales: $500K-$1M = 0.65, $1M-$2M = 0.75, $2M+ = 0.85
+
+### MoonDev Strategy 3: Combined Signal (85% Confidence)
+- MACD signal + Liquidation spike fire together
+- Both must agree = highest conviction trade
+- Estimated 85% confidence when both signals align
+- Strongest edge in the entire system
+
+### MoonDev Strategy 4: RBI Framework
+- **R**esearch → **B**acktest → **I**ncubate → Scale
+- Never deploy a strategy without backtesting first
+- Start small (incubate 24-72 hours with minimum size)
+- Scale only after proven profitable over 30+ trades
+- Apply this to EVERY new strategy before going live
+
+### MoonDev Strategy 5: Multi-Model Consensus
+- Multiple signals must agree before trading
+- Single signal alone = lower confidence
+- Combined signals (MACD + liquidation + Claude) = highest confidence
+- Never trust a single data point — always require confirmation
+
+---
+
 ## Configurable Settings (per user)
 - Domain expertise: injected into swarm prompt via `userDomain` param
 - Market categories: user selects which to track

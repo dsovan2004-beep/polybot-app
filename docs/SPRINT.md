@@ -165,12 +165,23 @@ Polymarket → Kalshi ticker mismatch was causing all EXEC failures. Instead of 
 ---
 
 ## Sprint 8: Scale to $15,000/month — IN PROGRESS 🔄
-**Goal:** Prove win rate, scale capital, build PolyBot SaaS
+**Goal:** Implement MoonDev strategies, prove win rate, scale capital, build PolyBot SaaS
 
 | Task | Status |
 |------|--------|
-| Add 90-day expiry filter to feed | ⬜ NOT STARTED |
+| Expiry filter added (365 days, year ≤2028) | ✅ COMPLETE |
+| Implement MACD(6/26/5) strategy on BTC 1-min candles | ⬜ NOT STARTED |
+| Wire Binance liquidation WebSocket feed | ⬜ NOT STARTED |
+| Combine MACD + liquidation = 85% confidence signal | ⬜ NOT STARTED |
+| Backtest MACD + liquidation on Kalshi BTC markets | ⬜ NOT STARTED |
+| Run RBI framework: Research → Backtest → Incubate → Scale | ⬜ NOT STARTED |
 | Validate 30 trades win rate | ⬜ NOT STARTED |
 | Scale to $100 when 67%+ win rate proven | ⬜ NOT STARTED |
 | Build PolyBot SaaS subscription tier | ⬜ NOT STARTED |
 | Target: 100 subscribers x $149/month = $14,900 | ⬜ NOT STARTED |
+
+**MoonDev Strategy Implementation Order:**
+1. MACD(6/26/5) on Binance BTC 1-min candles → signal when histogram > 10
+2. Binance liquidation feed → signal when $500K+ longs liquidated in 60s
+3. Combined signal → both MACD + liquidation agree = 85% confidence
+4. RBI: Backtest all 3 → incubate 24-72hrs → scale only after proven

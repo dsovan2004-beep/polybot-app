@@ -123,6 +123,18 @@ Path 1: Trading profits — scale capital from $25 → $75,000 deployed
 Path 2: PolyBot SaaS — 100 subscribers x $149/month = $14,900/month
 Timeline: 18-24 months
 
+## MoonDev Rules (youtube.com/@moondevonyt)
+- Skip sports markets entirely — no edge, too random
+- Skip near-resolution prices (90%+ or 10%-) — no room for profit
+- Only trade when multiple signals align (MACD + liquidation + Claude)
+- Run RBI before any new strategy: Research → Backtest → Incubate → Scale
+- Kill losers fast — exit immediately if thesis breaks
+- Scale winners — add to positions that are working
+- Never deploy without backtest first — 30+ trades minimum
+- MACD(6/26/5) on BTC 1-min candles beats all ML models (60.18% win rate)
+- Combined signal (MACD + liquidation) = highest conviction (85% confidence)
+- Single signal alone = lower confidence, always require confirmation
+
 ## Signal Validation Rules (Sprint 5)
 - 50 signals generated in first live session ✅
 - First signal with edge: Iranian regime NO at 85% confidence

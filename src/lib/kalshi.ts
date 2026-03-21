@@ -303,6 +303,28 @@ export async function placeLimitOrder(
 
   // Live mode — real API call
   try {
+    // Fetch live market data to get current ask price for immediate fill
+    let livePrice = params.price;
+    try {
+      const mkt = await kalshiFetch<Record<string, unknown>>({
+        method: "GET",
+        path: `/markets/${encodeURIComponent(params.marketTicker)}`,
+        apiKey,
+        privateKey,
+      });
+      const mktData = (mkt.market ?? mkt) as Record<string, unknown>;
+      if (params.side === "yes") {
+        const ask = mktData.yes_ask as number | undefined;
+        if (ask && ask > 0) livePrice = ask;
+      } else {
+        const ask = mktData.no_ask as number | undefined;
+        if (ask && ask > 0) livePrice = ask;
+      }
+      console.log(`[kalshi] Live ask for ${params.side.toUpperCase()}: ${livePrice}c (was ${params.price}c)`);
+    } catch (mktErr) {
+      console.warn(`[kalshi] Could not fetch live ask, using passed price ${params.price}c:`, mktErr instanceof Error ? mktErr.message : String(mktErr));
+    }
+
     const body = {
       ticker: params.marketTicker,
       action: "buy",
@@ -310,8 +332,8 @@ export async function placeLimitOrder(
       count: params.count,
       type: "limit",
       ...(params.side === "yes"
-        ? { yes_price: params.price }
-        : { no_price: params.price }),
+        ? { yes_price: livePrice }
+        : { no_price: livePrice }),
     };
 
     console.log(`[kalshi] LIVE ORDER request:`, JSON.stringify(body));
