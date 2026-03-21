@@ -545,9 +545,34 @@ async function pollKalshi(): Promise<void> {
     let skippedPrice = 0;
     let skippedSports = 0;
     let skippedVolume = 0;
+    let skippedExpiry = 0;
+    let skippedHorizon = 0;
     for (const m of allMarkets) {
       // Accept both "open" and "active" as valid tradeable statuses
       if (m.status !== "open" && m.status !== "active") { skippedStatus++; continue; }
+
+      // Expiry filter — skip markets expiring beyond 90 days or past 2027
+      const expiryRaw = (m.close_time ?? m.expiration_time ?? m.end_date_iso ?? "") as string;
+      if (expiryRaw) {
+        const expiryDate = new Date(expiryRaw);
+        if (!isNaN(expiryDate.getTime())) {
+          const now = new Date();
+          const daysUntilExpiry = (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+          if (daysUntilExpiry > 90 || expiryDate.getFullYear() > 2027) {
+            skippedExpiry++;
+            totalFiltered++;
+            continue;
+          }
+        }
+      }
+
+      // Long-horizon title filter — skip speculative far-future markets
+      const titleLower = m.title.toLowerCase();
+      if (/before\s+20[3-9]\d|before\s+2100|before\s+2099/.test(titleLower)) {
+        skippedHorizon++;
+        totalFiltered++;
+        continue;
+      }
 
       // Price — use last_price_dollars (most reliable from events endpoint)
       // parseFloat ensures string values from API become real numbers
@@ -562,9 +587,9 @@ async function pollKalshi(): Promise<void> {
         continue;
       }
 
-      // Volume filter — skip illiquid markets (no edge in dead markets)
+      // Volume filter — skip illiquid markets (500+ for quality signals)
       const vol24h = (m.volume_24h_fp ?? m.volume_24h ?? m.volume ?? 0) as number;
-      if (vol24h < 100) {
+      if (vol24h < 500) {
         skippedVolume++;
         totalFiltered++;
         continue;
@@ -601,7 +626,7 @@ async function pollKalshi(): Promise<void> {
       );
     }
 
-    console.log(`  ✅ Processed ${processed} | skipped: status=${skippedStatus} price=${skippedPrice} volume=${skippedVolume} sports=${skippedSports}`);
+    console.log(`  ✅ Processed ${processed} | skipped: status=${skippedStatus} expiry=${skippedExpiry} horizon=${skippedHorizon} price=${skippedPrice} volume=${skippedVolume} sports=${skippedSports}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ❌ Poll failed: ${msg}`);
