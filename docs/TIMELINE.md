@@ -41,12 +41,22 @@
 - Disabled /api/swarm to cut Claude API cost ($5/day → $0)
 - Volume filter added: 100+ minimum (kills dead/novelty markets)
 
-### 4:24 PM — FIRST REAL TRADE
-- Position: NO on Elon Musk first trillionaire
-- Platform: Kalshi (CFTC regulated)
-- Price: 15% | Payout: $1 if correct
-- Balance: $24.84 | 1 open position
+### 4:21 PM — FIRST REAL TRADE 🎯
+- Market: Who will be world's first trillionaire?
+- Position: NO on Elon Musk
+- Cost: $0.16 (1 contract at 16¢)
+- Order ID: 04ca969c-cc4a-4209-8cb9-1502b54137d7
+- Placed via EXEC button ✅
+- Telegram alert fired ✅
+- Kalshi confirmed ✅
+- Balance remaining: $24.84
 - THE MILLION DOLLAR JOURNEY BEGINS.
+
+### Evening — Bug Fixes
+- Position sizing fixed (was sending dollar amount, now sends contract count)
+- Telegram spam fixed (startup alert fires once only via boolean guard)
+- COWORK GUARDRAILS locked in CLAUDE.md (7 rules)
+- Unauthorized trade/test route removed
 
 ### End of Day — Sprint 8 Goals Set
 - $15,000/month target established

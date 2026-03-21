@@ -147,11 +147,16 @@ Supabase anon key is read-only when RLS is enabled. Feed script must use SUPABAS
 | Auto-kill-switch at -20% drawdown | ✅ COMPLETE |
 | MACD strategy implementation (btc5min.ts) | ✅ COMPLETE |
 | **FIRST REAL TRADE PLACED ON KALSHI** | ✅ COMPLETE |
+| Position sizing fixed (contracts not dollars) | ✅ COMPLETE |
+| Telegram spam fixed (startup alert fires once only) | ✅ COMPLETE |
+| COWORK GUARDRAILS added to CLAUDE.md | ✅ COMPLETE |
+| Unauthorized trade/test route removed | ✅ COMPLETE |
 
 **Key Milestone — Sprint 7 (March 20, 2026 4:24 PM PT):**
 - FIRST REAL TRADE: NO on Elon Musk first trillionaire ✅
-- Price: 15% | Payout: $1 if correct
-- Balance: $24.84 | 1 open position
+- Order ID: 04ca969c-cc4a-4209-8cb9-1502b54137d7
+- Cost: $0.16 (1 contract at 16¢)
+- Balance remaining: $24.84
 - Full pipeline: Kalshi REST → feed.ts (Mac) → Claude → Supabase → Dashboard → EXEC → Kalshi order
 
 **Key Discovery — Sprint 7:**
