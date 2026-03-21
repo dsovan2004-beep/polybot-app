@@ -103,10 +103,17 @@ export async function GET() {
           const t = mktInner?.title ?? mktInner?.subtitle ?? mktInner?.question;
           if (t) title = String(t);
         } catch { /* keep ticker as fallback */ }
-        // Spread ALL raw fields so frontend gets whatever Kalshi returns
+        // Normalize Kalshi fields for frontend:
+        // position_fp: "-2.00" = 2 NO contracts, "1.00" = 1 YES contract (string)
+        // market_exposure_dollars: "1.0800" = exposure in dollars (string, always positive)
+        // Compute market_exposure (cents, signed) so page.tsx can use it directly
+        const positionFp = parseFloat(String(raw.position_fp ?? "0"));
+        const exposureDollars = parseFloat(String(raw.market_exposure_dollars ?? "0"));
+        const sign = positionFp < 0 ? -1 : 1;
         return {
           ...raw,
           title,
+          market_exposure: Math.round(exposureDollars * 100) * sign,
         };
       })
     );
