@@ -675,6 +675,7 @@ export default function BotDashboard() {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [killSwitchActive, setKillSwitchActive] = useState(false);
+  const [showKillConfirm, setShowKillConfirm] = useState(false);
   const [paperMode, setPaperMode] = useState(() => {
     if (typeof window === "undefined") return true;
     const saved = localStorage.getItem("polybot_paper_mode");
@@ -697,9 +698,9 @@ export default function BotDashboard() {
     }
   }, []);
 
-  // Activate kill switch
+  // Activate kill switch (called after modal confirmation)
   const activateKillSwitch = useCallback(async () => {
-    if (!confirm("ACTIVATE KILL SWITCH? This will halt all trading.")) return;
+    setShowKillConfirm(false);
     try {
       const res = await fetch("/api/killswitch", { method: "POST" });
       const json = await res.json();
@@ -912,7 +913,7 @@ export default function BotDashboard() {
           )}
         </div>
         <button
-          onClick={activateKillSwitch}
+          onClick={() => setShowKillConfirm(true)}
           disabled={killSwitchActive}
           style={{
             fontSize: 12,
@@ -929,6 +930,75 @@ export default function BotDashboard() {
           {killSwitchActive ? "KILLED" : "Kill switch"}
         </button>
       </header>
+
+      {/* ── KILL SWITCH CONFIRMATION MODAL ── */}
+      {showKillConfirm && (
+        <div
+          onClick={() => setShowKillConfirm(false)}
+          onKeyDown={(e) => { if (e.key === "Escape") setShowKillConfirm(false); }}
+          tabIndex={-1}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 100,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "rgba(0,0,0,0.6)",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: css.bgCard,
+              border: `1px solid #f87171`,
+              borderRadius: css.radius,
+              padding: "28px 32px",
+              maxWidth: 420,
+              width: "90%",
+            }}
+          >
+            <p style={{ fontSize: 18, fontWeight: 700, color: "#f87171", marginBottom: 12 }}>
+              Kill all positions?
+            </p>
+            <p style={{ fontSize: 14, color: css.textSecondary, lineHeight: 1.5, marginBottom: 24 }}>
+              This will close {balanceData?.openPositions ?? 0} active trade{(balanceData?.openPositions ?? 0) !== 1 ? "s" : ""}. This action cannot be undone.
+            </p>
+            <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setShowKillConfirm(false)}
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  padding: "8px 20px",
+                  borderRadius: 6,
+                  border: `1px solid ${css.border}`,
+                  background: "transparent",
+                  color: css.textSecondary,
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={activateKillSwitch}
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  padding: "8px 20px",
+                  borderRadius: 6,
+                  border: "1px solid #f87171",
+                  background: "rgba(248,113,113,0.2)",
+                  color: "#f87171",
+                  cursor: "pointer",
+                }}
+              >
+                Confirm Kill
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 24px" }}>
         {/* ── TOAST ── */}
