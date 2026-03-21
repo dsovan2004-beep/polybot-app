@@ -380,7 +380,8 @@ async function analyzeMarket(
   title: string,
   category: string,
   yesPrice: number,
-  volume: number
+  volume: number,
+  expirationRaw: string
 ): Promise<void> {
   if (killSwitchActive || !anthropic) return;
   if (analyzedMarkets.has(kalshiTicker)) return;
@@ -389,7 +390,21 @@ async function analyzeMarket(
   console.log(`  🔄 Claude → ${title.slice(0, 60)}...`);
 
   try {
-    const userPrompt = `Market: ${title}
+    // Build date context so Claude knows when "now" is and when market expires
+    const todayStr = new Date().toISOString().split("T")[0];
+    let expiryContext = "";
+    if (expirationRaw) {
+      const expiryDate = new Date(expirationRaw);
+      if (!isNaN(expiryDate.getTime())) {
+        const expiryStr = expiryDate.toISOString().split("T")[0];
+        const daysLeft = Math.floor((expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+        expiryContext = `\nThis market expires on ${expiryStr}. Days until expiration: ${daysLeft}.`;
+      }
+    }
+
+    const userPrompt = `Today is ${todayStr}.${expiryContext}
+
+Market: ${title}
 Kalshi Ticker: ${kalshiTicker}
 Category: ${category}
 Current YES price: ${yesPrice.toFixed(2)} (implied probability: ${(yesPrice * 100).toFixed(1)}%)
@@ -628,13 +643,15 @@ async function pollKalshi(): Promise<void> {
       );
 
       // Analyze with Claude
+      const expirationRaw = String(m.close_time ?? m.expiration_time ?? m.end_date_iso ?? "");
       await analyzeMarket(
         marketId,
         m.ticker,
         m.title,
         category,
         yesPrice,
-        vol24h
+        vol24h,
+        expirationRaw
       );
     }
 
