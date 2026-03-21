@@ -12,6 +12,9 @@ import * as dotenv from "dotenv";
 import * as path from "path";
 import * as crypto from "crypto";
 
+// Telegram startup guard — fire only once
+let kalshiAlertSent = false;
+
 // Telegram alert helper (inline — avoids edge-only import)
 async function sendTelegramMessage(text: string): Promise<boolean> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -702,9 +705,14 @@ async function selfTest(): Promise<void> {
   const killed = await checkKillSwitch();
   console.log(killed ? "  🔴 Kill switch ACTIVE" : "  ✅ Kill switch OFF");
 
-  // 6. Telegram
-  const tgOk = await sendTelegramMessage("*PolyBot Kalshi Feed Started*\nSelf-test passed. Polling every 30s.");
-  console.log(tgOk ? "  6️⃣  ✅ Telegram sent" : "  6️⃣  ⏭️  Telegram skipped");
+  // 6. Telegram (only once — guard against re-invocation)
+  if (!kalshiAlertSent) {
+    const tgOk = await sendTelegramMessage("*PolyBot Kalshi Feed Started*\nSelf-test passed. Polling every 30s.");
+    console.log(tgOk ? "  6️⃣  ✅ Telegram sent" : "  6️⃣  ⏭️  Telegram skipped");
+    kalshiAlertSent = true;
+  } else {
+    console.log("  6️⃣  ⏭️  Telegram startup already sent — skipped");
+  }
 
   console.log(`\n🧪 SELF-TEST COMPLETE ✅\n`);
 }
