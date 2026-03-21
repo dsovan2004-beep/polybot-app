@@ -596,6 +596,7 @@ function MarketRowItem({
       {!isPaper && signal && (signal.consensus === "YES" || signal.consensus === "NO") && onExecute && (
         <button
           onClick={() => onExecute(signal, market)}
+          title={`Confidence: ${signal.confidence ?? 0}% | Gap: ${signal.price_gap != null ? (signal.price_gap * 100).toFixed(1) : "?"}% | Strategy: ${signal.strategy ?? "unknown"}`}
           style={{
             fontSize: 10,
             fontWeight: 700,
@@ -1169,9 +1170,12 @@ export default function BotDashboard() {
 
           {/* RIGHT — Markets + Signals */}
           <div>
-            <p style={{ fontSize: 12, fontWeight: 600, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+            <p style={{ fontSize: 12, fontWeight: 600, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>
               Markets &amp; Signals ({markets.length})
               {connected && <span style={{ color: "#4ade80", marginLeft: 8, fontSize: 10 }}>WS CONNECTED</span>}
+            </p>
+            <p style={{ fontSize: 11, color: "rgba(148,163,184,0.6)", marginBottom: 8 }}>
+              EXEC shown when confidence &ge; 67% and gap &ge; 10%
             </p>
             <Card>
               {markets.length === 0 ? (
