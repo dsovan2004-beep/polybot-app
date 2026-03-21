@@ -156,6 +156,24 @@ export async function GET() {
       if (alertRow) lastAlertAt = alertRow.created_at;
     } catch { /* no alerts yet — fine */ }
 
+    // P&L history — cumulative pnl over last 10 resolved trades (for sparkline)
+    let pnlHistory: number[] = [];
+    try {
+      const { data: histTrades } = await getServiceSupabase()
+        .from("trades")
+        .select("pnl")
+        .neq("status", "open")
+        .order("created_at", { ascending: true })
+        .limit(10);
+      if (histTrades && histTrades.length > 0) {
+        let cumulative = 0;
+        pnlHistory = histTrades.map((t: { pnl: number | null }) => {
+          cumulative += t.pnl ?? 0;
+          return Math.round(cumulative * 100) / 100;
+        });
+      }
+    } catch { /* optional — don't block response */ }
+
     debug.realizedPnl = realizedPnl;
     debug.tradesCount = tradesCount;
     debug.wins = wins;
@@ -178,6 +196,7 @@ export async function GET() {
         totalValue:
           Math.round((balance + positionExposure / 100) * 100) / 100,
         lastAlertAt,
+        pnlHistory,
         paperMode: false,
         debug,
       },

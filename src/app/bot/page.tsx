@@ -122,6 +122,7 @@ interface BalanceData {
   wins: number;
   totalValue: number;
   lastAlertAt: string | null;
+  pnlHistory: number[];
   paperMode: boolean;
 }
 
@@ -1149,11 +1150,45 @@ export default function BotDashboard() {
 
         {/* ── 4 STAT CARDS ── */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
-          <StatCard
-            label="Total P&L"
-            value={fmt$(balanceData?.totalPnl ?? 0)}
-            color={pnlColor(balanceData?.totalPnl ?? 0)}
-          />
+          <Card>
+            <p style={{ fontSize: 11, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Total P&L
+            </p>
+            <p style={{ fontSize: 24, fontWeight: 700, color: pnlColor(balanceData?.totalPnl ?? 0), marginTop: 4 }}>
+              {fmt$(balanceData?.totalPnl ?? 0)}
+            </p>
+            {/* P&L sparkline */}
+            {(() => {
+              const pts = balanceData?.pnlHistory ?? [];
+              if (pts.length < 2) return null;
+              const min = Math.min(...pts);
+              const max = Math.max(...pts);
+              const range = max - min || 1;
+              const w = 140;
+              const h = 36;
+              const pad = 2;
+              const points = pts
+                .map((v, i) => {
+                  const x = pad + (i / (pts.length - 1)) * (w - pad * 2);
+                  const y = pad + (1 - (v - min) / range) * (h - pad * 2);
+                  return `${x.toFixed(1)},${y.toFixed(1)}`;
+                })
+                .join(" ");
+              const trending = pts[pts.length - 1] > pts[0] ? "#4ade80" : pts[pts.length - 1] < pts[0] ? "#f87171" : "#94a3b8";
+              return (
+                <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ marginTop: 6, opacity: 0.7 }}>
+                  <polyline
+                    points={points}
+                    fill="none"
+                    stroke={trending}
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              );
+            })()}
+          </Card>
           <StatCard
             label="Win Rate"
             value={balanceData?.tradesCount ? `${fmtPct(balanceData.winRate)} (${balanceData.wins}/${balanceData.tradesCount})` : "No trades yet"}
