@@ -511,7 +511,7 @@ async function pollKalshi(): Promise<void> {
     const data = await kalshiFetch<{
       events: KalshiEvent[];
       markets?: KalshiMarketFromAPI[];
-    }>("GET", "/events?status=open&with_nested_markets=true&limit=1000");
+    }>("GET", "/events?status=open&with_nested_markets=true&limit=200");
 
     // Collect all markets from events
     let allMarkets: KalshiMarketFromAPI[] = [];
