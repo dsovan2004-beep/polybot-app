@@ -5,7 +5,7 @@
 // Edge runtime compatible
 // ============================================================================
 
-import { getBalance, getPositions } from "@/lib/kalshi";
+import { getBalance, getPositions, getMarketByTicker } from "@/lib/kalshi";
 
 export const runtime = "edge";
 
@@ -78,6 +78,25 @@ export async function GET() {
       0
     );
 
+    // Enrich positions with market titles + safe numeric defaults
+    debug.step = "enriching-positions";
+    const enrichedPositions = await Promise.all(
+      positions.map(async (pos) => {
+        let title = pos.ticker;
+        try {
+          const mkt = await getMarketByTicker(pos.ticker, apiKey!, privateKey!);
+          if (mkt?.title) title = mkt.title;
+        } catch { /* keep ticker as fallback */ }
+        return {
+          ticker: pos.ticker,
+          title,
+          market_exposure: typeof pos.market_exposure === "number" ? pos.market_exposure : 0,
+          resting_orders_count: pos.resting_orders_count ?? 0,
+          total_traded: pos.total_traded ?? 0,
+        };
+      })
+    );
+
     debug.step = "done";
     debug.finalBalance = balance;
     debug.openPositions = openPositions;
@@ -87,7 +106,7 @@ export async function GET() {
       data: {
         kalshi: Math.round(balance * 100) / 100,
         openPositions,
-        positions,
+        positions: enrichedPositions,
         totalValue:
           Math.round((balance + positionExposure / 100) * 100) / 100,
         paperMode: false,

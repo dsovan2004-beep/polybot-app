@@ -106,6 +106,7 @@ async function fetchBtc5Min(): Promise<Btc5MinData> {
 
 interface KalshiPositionRow {
   ticker: string;
+  title: string;
   market_exposure: number;
   resting_orders_count: number;
   total_traded: number;
@@ -1043,10 +1044,7 @@ export default function BotDashboard() {
                 </thead>
                 <tbody>
                   {balanceData.positions.map((pos) => {
-                    const matchedMarket = markets.find(
-                      (m) => (m as MarketRow & { kalshi_ticker?: string }).kalshi_ticker === pos.ticker
-                    );
-                    const title = matchedMarket?.title ?? pos.ticker;
+                    const title = pos.title || pos.ticker;
                     const side = pos.market_exposure >= 0 ? "YES" : "NO";
                     const exposureAbs = Math.abs(pos.market_exposure) / 100;
                     const exposureColor = pos.market_exposure >= 0 ? "#4ade80" : "#f87171";
