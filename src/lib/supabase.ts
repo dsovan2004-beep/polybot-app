@@ -29,6 +29,7 @@ export interface MarketRow {
 export interface SignalRow {
   id: string;
   market_id: string | null;
+  market_title: string | null;
   strategy: string;
   claude_vote: string | null;
   gpt4o_vote: string | null;
@@ -184,11 +185,15 @@ export async function insertSignal(
 export async function getRecentSignals(limit = 30) {
   const { data, error } = await getSupabase()
     .from("signals")
-    .select("*")
+    .select("*, markets(title)")
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) throw new Error(`getRecentSignals: ${error.message}`);
-  return data as SignalRow[];
+  // Flatten joined market title onto each signal row
+  return (data ?? []).map((row: Record<string, unknown>) => {
+    const mkts = row.markets as { title: string } | null;
+    return { ...row, market_title: mkts?.title ?? null } as SignalRow;
+  });
 }
 
 export async function getSignalsByMarket(marketId: string, limit = 20) {

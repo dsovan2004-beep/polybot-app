@@ -365,12 +365,10 @@ function SignalCard({ signal, markets }: { signal: SignalRow; markets: MarketRow
   const confidence = signal.confidence ?? 0;
   const confidencePct = Math.min(100, confidence);
 
-  // Look up market title from markets array
-  const matchedMarket = signal.market_id
-    ? markets.find((m) => m.id === signal.market_id)
-    : null;
-  const marketTitle = matchedMarket?.title?.slice(0, 60)
-    ?? (signal.market_id ? signal.market_id.slice(0, 12) + "..." : "Unknown market");
+  // Use joined market_title from Supabase query; fall back to markets array, then ticker
+  const marketTitle = signal.market_title
+    ?? markets.find((m) => m.id === signal.market_id)?.title
+    ?? "Unknown market";
 
   // Strategy display — format nicely
   const strategy = signal.strategy ?? "unknown";
@@ -379,6 +377,7 @@ function SignalCard({ signal, markets }: { signal: SignalRow; markets: MarketRow
     : strategy === "logical_arb" ? "Logical Arb"
     : strategy === "maker" ? "Maker"
     : strategy === "self_test" ? "Self Test"
+    : strategy === "unknown" ? "AI Analysis"
     : strategy;
 
   return (
@@ -1158,7 +1157,7 @@ export default function BotDashboard() {
             <p style={{ fontSize: 12, fontWeight: 600, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
               Signal History ({signals.length})
             </p>
-            <div style={{ maxHeight: 300, overflowY: "auto" }}>
+            <div style={{ maxHeight: 600, overflowY: "auto" }}>
               {signals.map((s) => (
                 <SignalCard key={s.id} signal={s} markets={markets} />
               ))}
