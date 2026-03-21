@@ -121,6 +121,7 @@ interface BalanceData {
   tradesCount: number;
   wins: number;
   totalValue: number;
+  lastAlertAt: string | null;
   paperMode: boolean;
 }
 
@@ -913,6 +914,23 @@ export default function BotDashboard() {
               {balanceData.openPositions > 0 && ` | ${balanceData.openPositions} pos`}
             </span>
           )}
+          {/* Last Telegram alert indicator */}
+          {balanceData && (() => {
+            const alertAt = balanceData.lastAlertAt;
+            if (!alertAt) return (
+              <span style={{ fontSize: 11, color: "#64748b", fontFamily: "monospace" }}>
+                No alerts yet
+              </span>
+            );
+            const minsAgo = Math.floor((Date.now() - new Date(alertAt).getTime()) / 60_000);
+            const label = minsAgo < 1 ? "just now" : minsAgo < 60 ? `${minsAgo}m ago` : `${Math.floor(minsAgo / 60)}h ago`;
+            const alertColor = minsAgo < 5 ? "#4ade80" : minsAgo < 30 ? "#fbbf24" : "#f87171";
+            return (
+              <span style={{ fontSize: 11, fontWeight: 500, color: alertColor, fontFamily: "monospace" }}>
+                Last alert: {label}
+              </span>
+            );
+          })()}
         </div>
         <button
           onClick={() => setShowKillConfirm(true)}

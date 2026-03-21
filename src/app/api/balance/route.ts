@@ -142,9 +142,24 @@ export async function GET() {
     } catch { /* trades query optional — don't block response */ }
 
     const winRate = tradesCount > 0 ? wins / tradesCount : 0;
+
+    // Last Telegram alert timestamp (most recent actionable signal)
+    let lastAlertAt: string | null = null;
+    try {
+      const { data: alertRow } = await getServiceSupabase()
+        .from("signals")
+        .select("created_at")
+        .or("consensus.eq.YES,consensus.eq.NO")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single();
+      if (alertRow) lastAlertAt = alertRow.created_at;
+    } catch { /* no alerts yet — fine */ }
+
     debug.realizedPnl = realizedPnl;
     debug.tradesCount = tradesCount;
     debug.wins = wins;
+    debug.lastAlertAt = lastAlertAt;
 
     debug.step = "done";
     debug.finalBalance = balance;
@@ -162,6 +177,7 @@ export async function GET() {
         wins,
         totalValue:
           Math.round((balance + positionExposure / 100) * 100) / 100,
+        lastAlertAt,
         paperMode: false,
         debug,
       },
