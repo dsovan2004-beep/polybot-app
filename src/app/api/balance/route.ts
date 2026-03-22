@@ -10,6 +10,8 @@ import { getServiceSupabase } from "@/lib/supabase";
 
 export const runtime = "edge";
 
+const STARTING_BALANCE = 21.78; // Initial deposit — used for true P&L calculation
+
 export async function GET() {
   const debug: Record<string, unknown> = { step: "init" };
 
@@ -119,13 +121,10 @@ export async function GET() {
       })
     );
 
-    // Compute P&L stats from Kalshi positions + Supabase trades
+    // Compute P&L stats from Kalshi portfolio value vs starting balance
     debug.step = "computing-pnl";
-    // Realized P&L from Kalshi positions (sum of realized_pnl_dollars)
-    const realizedPnl = enrichedPositions.reduce((sum, p) => {
-      const raw = p as Record<string, unknown>;
-      return sum + parseFloat(String(raw.realized_pnl_dollars ?? "0"));
-    }, 0);
+    const totalPortfolioValue = balance + positionExposure / 100;
+    const realizedPnl = totalPortfolioValue - STARTING_BALANCE;
 
     // Win rate from Supabase trades table (resolved trades only)
     let tradesCount = 0;

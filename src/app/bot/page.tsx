@@ -931,7 +931,7 @@ export default function BotDashboard() {
                 border: `1px solid rgba(99,102,241,0.3)`,
               }}
             >
-              {balanceData.paperMode ? "PAPER" : `Balance: $${balanceData.kalshi.toFixed(2)}`}
+              {balanceData.paperMode ? "PAPER" : `Balance: $${balanceData.totalValue.toFixed(2)}`}
               {balanceData.openPositions > 0 && ` | ${balanceData.openPositions} pos`}
             </span>
           )}
@@ -1211,7 +1211,7 @@ export default function BotDashboard() {
           </Card>
           <StatCard
             label="Win Rate"
-            value={balanceData?.tradesCount ? `${fmtPct(balanceData.winRate)} (${balanceData.wins}/${balanceData.tradesCount})` : "No trades yet"}
+            value={balanceData?.tradesCount ? `${fmtPct(balanceData.winRate)} (${balanceData.wins}/${balanceData.tradesCount})` : "Building history..."}
           />
           <StatCard
             label="Signals Today"
