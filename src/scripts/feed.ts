@@ -1344,8 +1344,19 @@ async function pollKalshi(): Promise<void> {
           }
         }
 
-        // Log only crypto markets that survive all filters (volume + distance)
-        console.log(`  🪙 CRYPTO PASS: ${m.ticker} daysLeft=${daysLeft} confThreshold=${confThreshold}%`);
+        // YES price sweet spot filter — best risk/reward at 10c-50c
+        // YES < 10c → NO costs 90c+ (minimal profit) → SKIP
+        // YES > 50c → threshold too likely to hit → risky for NO → SKIP
+        // YES 10c-50c → NO pays 50c-90c → SWEET SPOT → ANALYZE ✅
+        const yesCents = Math.round(yesPrice * 100);
+        if (yesCents < 10 || yesCents > 50) {
+          console.log(`  💰 SKIP: ${m.ticker} YES price ${yesCents}c outside 10c-50c sweet spot`);
+          totalFiltered++;
+          continue;
+        }
+
+        // Log only crypto markets that survive all filters (volume + distance + price)
+        console.log(`  🪙 CRYPTO PASS: ${m.ticker} daysLeft=${daysLeft} confThreshold=${confThreshold}% YES=${yesCents}c`);
       }
 
       // Categorize for labeling (not filtering — let Claude decide)
