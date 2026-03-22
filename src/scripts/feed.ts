@@ -1180,6 +1180,37 @@ async function pollKalshi(): Promise<void> {
       for (const line of cryptoMatches) {
         console.log(`      ${line}`);
       }
+
+      // --- Crypto API endpoint discovery (first poll only) ---
+      console.log(`\n  🔬 CRYPTO API DISCOVERY — testing 4 endpoint formats for kxbtcd...`);
+      const cryptoTestPaths = [
+        "/markets?series_ticker=KXBTCD&status=open&limit=10",
+        "/markets?event_ticker=KXBTCD-26MAR22&status=open&limit=10",
+        "/events/KXBTCD-26MAR22/markets",
+        "/markets?status=open&limit=10&cursor=KXBTCD",
+      ];
+      for (const testPath of cryptoTestPaths) {
+        try {
+          const fullPath = `${KALSHI_API_PREFIX}${testPath}`;
+          const ts = String(Date.now());
+          const sig = signRequest(KALSHI_PRIVATE_KEY!, ts, "GET", fullPath);
+          const url = `${KALSHI_HOST}${fullPath}`;
+          const resp = await fetch(url, {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+              "KALSHI-ACCESS-KEY": KALSHI_API_KEY!,
+              "KALSHI-ACCESS-SIGNATURE": sig,
+              "KALSHI-ACCESS-TIMESTAMP": ts,
+            },
+          });
+          const body = await resp.text();
+          console.log(`    ${resp.status} ${testPath}`);
+          console.log(`    → ${body.slice(0, 200)}`);
+        } catch (err) {
+          console.log(`    ERR ${testPath}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
     }
 
     // Debug: log first market to see actual API shape
