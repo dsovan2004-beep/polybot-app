@@ -1275,6 +1275,41 @@ async function pollKalshi(): Promise<void> {
         continue;
       }
 
+      // Crypto proximity + volume filters — avoid high-risk trades near current price
+      if (isCryptoShortTerm && cryptoPrices) {
+        // Higher volume floor for crypto (1000 vs 100 general)
+        if (vol24h < 1000) {
+          totalFiltered++;
+          continue;
+        }
+
+        // Parse threshold from ticker: e.g. KXBTCD-26MAR2212-T68899.99 → 68899.99
+        const thresholdMatch = m.ticker.match(/-T([\d.]+)$/);
+        if (thresholdMatch) {
+          const threshold = parseFloat(thresholdMatch[1]);
+          // Determine which coin's price to compare against
+          let coinPrice = 0;
+          if (tickerLower.startsWith("kxbtcd") || tickerLower.startsWith("kxbtc15m")) {
+            coinPrice = cryptoPrices.btc;
+          } else if (tickerLower.startsWith("kxethd")) {
+            coinPrice = cryptoPrices.eth;
+          } else if (tickerLower.startsWith("kxsold")) {
+            coinPrice = cryptoPrices.sol;
+          }
+
+          if (coinPrice > 0) {
+            const distance = Math.abs(coinPrice - threshold);
+            // Min distance: $500 for BTC, $30 for ETH, $2 for SOL
+            const minDistance = coinPrice > 10000 ? 500 : coinPrice > 500 ? 30 : 2;
+            if (distance < minDistance) {
+              console.log(`  ⚡ SKIP: ${m.ticker} too close to price ($${coinPrice.toFixed(0)} vs $${threshold.toFixed(0)}, distance=$${distance.toFixed(0)} < $${minDistance} min)`);
+              totalFiltered++;
+              continue;
+            }
+          }
+        }
+      }
+
       // Categorize for labeling (not filtering — let Claude decide)
       const category = categorize(m.title);
 
