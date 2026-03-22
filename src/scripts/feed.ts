@@ -99,6 +99,8 @@ const MIN_BALANCE_FLOOR = 5.00; // Never trade below this balance ($)
 const MAX_TRADE_DOLLARS = 1.25; // Max cost per single trade ($)
 const TAKE_PROFIT_PCT = 25;    // Sell when position is up 25%+
 const STOP_LOSS_PCT = -40;     // Sell when position is down 40%+
+const DAILY_PROFIT_TARGET = 3.00; // Stop trading after +$3 daily P&L
+const DAILY_LOSS_LIMIT = -5.00;   // Stop trading after -$5 daily P&L
 
 const SPORTS_KEYWORDS = [
   "nba", "nfl", "ufc", "football", "basketball", "soccer",
@@ -396,6 +398,26 @@ Rules:
 const analyzedMarkets = new Set<string>();
 
 // ---------------------------------------------------------------------------
+// Daily P&L check — sum today's closed trade P&L from Supabase
+// Returns 0.0 on error (fail open — don't block trades on query failure)
+// ---------------------------------------------------------------------------
+async function getDailyPnL(): Promise<number> {
+  try {
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+    const { data, error } = await supabase
+      .from("trades")
+      .select("pnl")
+      .eq("status", "closed")
+      .gte("exit_at", todayStart.toISOString());
+    if (error || !data) return 0;
+    return data.reduce((sum: number, t: { pnl: number | null }) => sum + (t.pnl ?? 0), 0);
+  } catch {
+    return 0; // Fail open
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Auto-exec — place Kalshi order directly from feed.ts
 // Uses the existing kalshiFetch (Node.js native crypto) already in this file.
 // ---------------------------------------------------------------------------
@@ -413,6 +435,17 @@ async function autoExecTrade(
     if (PAPER_MODE) {
       const priceCents = Math.round(yesPrice * 100);
       console.log(`  📝 PAPER: would have bought ${kalshiTicker} ${side.toUpperCase()} @ ${priceCents}c`);
+      return;
+    }
+
+    // Safety Check 0 — Daily P&L cap
+    const dailyPnL = await getDailyPnL();
+    if (dailyPnL >= DAILY_PROFIT_TARGET) {
+      console.log(`  🎉 DAILY TARGET HIT: +$${dailyPnL.toFixed(2)} today — no new trades`);
+      return;
+    }
+    if (dailyPnL <= DAILY_LOSS_LIMIT) {
+      console.log(`  🚫 DAILY LOSS LIMIT: -$${Math.abs(dailyPnL).toFixed(2)} today — no new trades`);
       return;
     }
 
@@ -1073,6 +1106,16 @@ async function pollKalshi(): Promise<void> {
         totalFiltered++;
         continue;
       }
+      // BTC price range filter — no live price data to assess these (before 📅 log to reduce noise)
+      const titleLower = m.title.toLowerCase();
+      if (
+        (m.ticker.startsWith("KXBTC-") && titleLower.includes("price range")) ||
+        titleLower.includes("bitcoin price range")
+      ) {
+        totalFiltered++;
+        continue;
+      }
+
       console.log(`  📅 ${m.ticker} daysLeft=${daysLeft} confThreshold=${confThreshold}%`);
 
       // Price — use last_price_dollars (most reliable from events endpoint)
@@ -1099,17 +1142,6 @@ async function pollKalshi(): Promise<void> {
       // Sports filter — skip sports markets entirely
       if (isSports(m.title)) {
         skippedSports++;
-        totalFiltered++;
-        continue;
-      }
-
-      // BTC price range filter — no live price data to assess these
-      const titleLower = m.title.toLowerCase();
-      if (
-        (m.ticker.startsWith("KXBTC-") && titleLower.includes("price range")) ||
-        titleLower.includes("bitcoin price range")
-      ) {
-        console.log(`  ⚡ SKIP: ${m.ticker} BTC price range market (no live price data)`);
         totalFiltered++;
         continue;
       }
