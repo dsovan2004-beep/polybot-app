@@ -801,9 +801,13 @@ Kalshi Ticker: ${kalshiTicker}
 Category: ${category}
 Current YES price: ${yesPrice.toFixed(2)} (implied probability: ${(yesPrice * 100).toFixed(1)}%)
 Volume: $${volume.toLocaleString()}${btcPrice ? `\nCurrent BTC price: $${btcPrice}` : ""}${
-      cryptoPrices && kalshiTicker.toLowerCase().includes("updown")
-        ? `\nLIVE MARKET DATA (Coinbase): BTC=$${cryptoPrices.btc.toLocaleString()} (${cryptoPrices.btcTrend5m >= 0 ? "+" : ""}${cryptoPrices.btcTrend5m.toFixed(2)}% 5min). ETH=$${cryptoPrices.eth.toLocaleString()}. SOL=$${cryptoPrices.sol.toFixed(0)}. XRP=$${cryptoPrices.xrp.toFixed(2)}. Use the 5-min trend to assess UP or DOWN direction for the next 15 minutes. Rising momentum = lean UP. Falling momentum = lean DOWN.`
-        : ""
+      (() => {
+        if (!cryptoPrices) return "";
+        const t = kalshiTicker.toLowerCase();
+        const isCrypto = t.includes("updown") || t.startsWith("kxbtc15m") || t.startsWith("kxbtcd") || t.startsWith("kxethd") || t.startsWith("kxsold");
+        if (!isCrypto) return "";
+        return `\nLIVE MARKET DATA (Coinbase): BTC=$${cryptoPrices.btc.toLocaleString()} (${cryptoPrices.btcTrend5m >= 0 ? "+" : ""}${cryptoPrices.btcTrend5m.toFixed(2)}% 5min). ETH=$${cryptoPrices.eth.toLocaleString()}. SOL=$${cryptoPrices.sol.toFixed(0)}. XRP=$${cryptoPrices.xrp.toFixed(2)}. Use the 5-min trend to assess UP or DOWN direction for the next 15 minutes. Rising momentum = lean UP. Falling momentum = lean DOWN.`;
+      })()
     }
 
 What is your analysis?`;
@@ -1106,11 +1110,16 @@ async function pollKalshi(): Promise<void> {
       console.log(`  🧠 Memory context loaded (${memoryContext.split("\n").length - 2} lines)`);
     }
 
-    // Fetch multiple categories — priority series first, then general
+    // Fetch multiple categories — priority series first, then general, then crypto updown
     const endpoints = [
       "/events?status=open&with_nested_markets=true&limit=200&series_ticker=KXBTC&sort_by=close_time&sort_direction=asc",
       "/events?status=open&with_nested_markets=true&limit=200&series_ticker=KXFED&sort_by=close_time&sort_direction=asc",
       "/events?status=open&with_nested_markets=true&limit=200&sort_by=close_time&sort_direction=asc",
+      // Crypto short-term markets (confirmed series tickers from Kalshi URLs)
+      "/events?status=open&with_nested_markets=true&limit=200&series_ticker=kxbtc15m",  // BTC 15-min up/down
+      "/events?status=open&with_nested_markets=true&limit=200&series_ticker=kxbtcd",    // BTC hourly above/below
+      "/events?status=open&with_nested_markets=true&limit=200&series_ticker=kxethd",    // ETH hourly
+      "/events?status=open&with_nested_markets=true&limit=200&series_ticker=kxsold",    // SOL hourly
     ];
 
     let allMarkets: KalshiMarketFromAPI[] = [];
@@ -1148,6 +1157,18 @@ async function pollKalshi(): Promise<void> {
 
     totalMarketsFound = allMarkets.length;
     console.log(`  📦 ${allMarkets.length} markets (deduped) from ${totalEvents} events across ${endpoints.length} queries`);
+
+    // Debug: show crypto short-term tickers found (first poll only)
+    if (totalPolled === 1) {
+      const cryptoTickers = allMarkets
+        .filter((m) => {
+          const t = m.ticker.toLowerCase();
+          return t.includes("updown") || t.startsWith("kxbtc15m") || t.startsWith("kxbtcd") || t.startsWith("kxethd") || t.startsWith("kxsold");
+        })
+        .slice(0, 5)
+        .map((m) => m.ticker);
+      console.log(`  🔍 Crypto tickers found: ${cryptoTickers.length > 0 ? cryptoTickers.join(", ") : "NONE — series tickers may be wrong"}`);
+    }
 
     // Debug: log first market to see actual API shape
     if (allMarkets.length > 0) {
@@ -1198,11 +1219,16 @@ async function pollKalshi(): Promise<void> {
         totalFiltered++;
         continue;
       }
-      // BTC price range filter — skip price range markets but ALLOW updown markets (15-min crypto)
+      // BTC price range filter — skip price range markets but ALLOW crypto short-term markets
       const titleLower = m.title.toLowerCase();
       const tickerLower = m.ticker.toLowerCase();
-      const isUpDown = tickerLower.includes("updown");
-      if (!isUpDown) {
+      const isCryptoShortTerm =
+        tickerLower.includes("updown") ||
+        tickerLower.startsWith("kxbtc15m") ||
+        tickerLower.startsWith("kxbtcd") ||
+        tickerLower.startsWith("kxethd") ||
+        tickerLower.startsWith("kxsold");
+      if (!isCryptoShortTerm) {
         if (
           (m.ticker.startsWith("KXBTC-") && titleLower.includes("price range")) ||
           titleLower.includes("bitcoin price range")
