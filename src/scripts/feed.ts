@@ -93,6 +93,7 @@ console.log(`✅ KALSHI_PRIVATE_KEY loaded (${KALSHI_PRIVATE_KEY.length} chars)`
 const PRICE_MIN = 0.02;
 const PRICE_MAX = 0.98;
 const POLL_INTERVAL_MS = 30_000; // 30 seconds
+const PAPER_MODE = false; // Set true to log trades without placing real orders
 
 const SPORTS_KEYWORDS = [
   "nba", "nfl", "ufc", "football", "basketball", "soccer",
@@ -389,6 +390,124 @@ Rules:
 
 const analyzedMarkets = new Set<string>();
 
+// ---------------------------------------------------------------------------
+// Auto-exec — place Kalshi order directly from feed.ts
+// Uses the existing kalshiFetch (Node.js native crypto) already in this file.
+// ---------------------------------------------------------------------------
+
+async function autoExecTrade(
+  kalshiTicker: string,
+  side: "yes" | "no",
+  marketId: string,
+  strategy: string,
+  confidence: number,
+  yesPrice: number
+): Promise<void> {
+  try {
+    // Paper mode gate
+    if (PAPER_MODE) {
+      const priceCents = Math.round(yesPrice * 100);
+      console.log(`  📝 PAPER: would have bought ${kalshiTicker} ${side.toUpperCase()} @ ${priceCents}c`);
+      return;
+    }
+
+    // Fetch live market data to get current ask price for immediate fill
+    const mktRaw = await kalshiFetch<Record<string, unknown>>(
+      "GET",
+      `/markets/${encodeURIComponent(kalshiTicker)}`
+    );
+    const mkt = (mktRaw.market ?? mktRaw) as Record<string, unknown>;
+
+    let priceCents: number;
+    if (side === "yes") {
+      const askDollars = mkt.yes_ask_dollars as number | undefined;
+      const askCentsRaw = mkt.yes_ask as number | undefined;
+      if (askDollars && askDollars > 0) {
+        priceCents = Math.round(askDollars * 100);
+      } else if (askCentsRaw && askCentsRaw > 0) {
+        priceCents = askCentsRaw;
+      } else {
+        priceCents = Math.round(yesPrice * 100);
+      }
+    } else {
+      const askDollars = mkt.no_ask_dollars as number | undefined;
+      const askCentsRaw = mkt.no_ask as number | undefined;
+      if (askDollars && askDollars > 0) {
+        priceCents = Math.round(askDollars * 100);
+      } else if (askCentsRaw && askCentsRaw > 0) {
+        priceCents = askCentsRaw;
+      } else {
+        priceCents = Math.round((1 - yesPrice) * 100);
+      }
+    }
+
+    // Sanity: price must be 1-99 cents
+    if (priceCents < 1 || priceCents > 99) {
+      console.error(`  ❌ AUTO-EXEC FAILED: ${kalshiTicker} invalid price ${priceCents}c`);
+      return;
+    }
+
+    const count = 1; // 1 contract = ~$0.01-$0.99 max risk
+
+    const body = {
+      ticker: kalshiTicker,
+      action: "buy",
+      side,
+      count,
+      type: "limit",
+      ...(side === "yes" ? { yes_price: priceCents } : { no_price: priceCents }),
+    };
+
+    console.log(`  🤖 AUTO-EXEC: placing ${side.toUpperCase()} on ${kalshiTicker} @ ${priceCents}c...`);
+
+    const data = await kalshiFetch<Record<string, unknown>>("POST", "/portfolio/orders", body);
+
+    // Extract order ID — Kalshi may return { order: { order_id } } or { order_id }
+    const orderObj = data.order as Record<string, unknown> | undefined;
+    const orderId =
+      (orderObj?.order_id as string) ??
+      (data.order_id as string) ??
+      null;
+
+    if (!orderId) {
+      console.error(`  ❌ AUTO-EXEC FAILED: ${kalshiTicker} no order_id in response`);
+      return;
+    }
+
+    console.log(`  ✅ AUTO-EXEC: ${kalshiTicker} ${side.toUpperCase()} @ ${priceCents}c | order ${orderId}`);
+
+    // Save trade to Supabase
+    const { error: tradeErr } = await supabase.from("trades").insert({
+      market_id: marketId,
+      direction: side,
+      entry_price: yesPrice,
+      shares: count,
+      entry_cost: priceCents / 100,
+      strategy: strategy ?? "unknown",
+      status: "open",
+      notes: `AUTO-EXEC: ${orderId} | ${kalshiTicker} | conf:${confidence}%`,
+    });
+    if (tradeErr) {
+      console.error(`  ⚠️  Trade save failed: ${tradeErr.message}`);
+    }
+
+    // Mark signal as acted on
+    // (best-effort — don't crash if this fails)
+    await supabase
+      .from("signals")
+      .update({ acted_on: true })
+      .eq("market_id", marketId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .then(() => {})
+      .catch(() => {});
+
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  ❌ AUTO-EXEC FAILED: ${kalshiTicker} ${msg}`);
+  }
+}
+
 interface ClaudeSignal {
   vote: "YES" | "NO" | "NO_TRADE";
   probability: number;
@@ -518,10 +637,15 @@ What is your analysis?`;
       `  ${voteColor} ${finalVote} | conf ${confidence}% | gap ${(priceGap * 100).toFixed(1)}% | ${claudeMs}ms | ${parsed.reason?.slice(0, 50)}`
     );
 
-    // Telegram alert for actionable signals
+    // Auto-exec + Telegram alert for actionable signals
     if (finalVote !== "NO_TRADE" && confidence >= confThreshold && priceGap >= MIN_PRICE_GAP) {
+      // Auto-execute the trade
+      const side: "yes" | "no" = finalVote === "YES" ? "yes" : "no";
+      await autoExecTrade(kalshiTicker, side, marketId, strategy, confidence, yesPrice);
+
+      const modeTag = PAPER_MODE ? "📝 PAPER" : "🤖 AUTO-EXECUTED";
       const alertMsg = [
-        `*PolyBot Signal*`,
+        `*PolyBot Signal — ${modeTag}*`,
         ``,
         `Market: ${title.slice(0, 60)}`,
         `Ticker: ${kalshiTicker}`,
