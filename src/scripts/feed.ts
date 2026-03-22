@@ -97,6 +97,7 @@ const PAPER_MODE = false; // Set true to log trades without placing real orders
 const MAX_POSITIONS = 8;       // Max simultaneous open positions
 const MIN_BALANCE_FLOOR = 5.00; // Never trade below this balance ($)
 const MAX_TRADE_DOLLARS = 1.25; // Max cost per single trade ($)
+const TAKE_PROFIT_PCT = 25;    // Sell when position is up 25%+
 
 const SPORTS_KEYWORDS = [
   "nba", "nfl", "ufc", "football", "basketball", "soccer",
@@ -546,6 +547,171 @@ async function autoExecTrade(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Auto-sell — take profit on open positions
+// Runs once per poll cycle, checks all open Kalshi positions for 25%+ gain
+// ---------------------------------------------------------------------------
+
+async function checkAndSellPositions(): Promise<void> {
+  if (killSwitchActive) return;
+  if (PAPER_MODE) return; // No positions to sell in paper mode
+
+  try {
+    // Fetch open positions from Kalshi
+    const posData = await kalshiFetch<{
+      market_positions: {
+        ticker: string;
+        market_exposure_dollars: string;
+        position_fp: string;
+      }[];
+    }>("GET", "/portfolio/positions?settlement_status=unsettled&limit=20");
+
+    const positions = posData.market_positions ?? [];
+    if (positions.length === 0) return;
+
+    console.log(`  💰 Checking ${positions.length} open positions for take-profit...`);
+
+    for (const pos of positions) {
+      try {
+        const ticker = pos.ticker;
+        const posFp = parseFloat(String(pos.position_fp));
+        const side: "yes" | "no" = posFp < 0 ? "no" : "yes";
+        const contracts = Math.abs(posFp);
+        if (contracts === 0) continue;
+
+        // Look up entry cost from Supabase trades table via markets table
+        // markets.polymarket_id = ticker, trades.market_id = markets.id
+        const { data: marketRow } = await supabase
+          .from("markets")
+          .select("id")
+          .eq("polymarket_id", ticker)
+          .single();
+
+        if (!marketRow) {
+          console.log(`  ⚠️  TAKE-PROFIT: ${ticker} — no market row in Supabase, skipping`);
+          continue;
+        }
+
+        const { data: tradeRow } = await supabase
+          .from("trades")
+          .select("id, entry_cost, direction")
+          .eq("market_id", marketRow.id)
+          .eq("status", "open")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .single();
+
+        if (!tradeRow || !tradeRow.entry_cost) {
+          console.log(`  ⚠️  TAKE-PROFIT: ${ticker} — no open trade in Supabase, skipping`);
+          continue;
+        }
+
+        const entryCostDollars = parseFloat(String(tradeRow.entry_cost));
+        if (entryCostDollars <= 0 || isNaN(entryCostDollars)) continue;
+
+        // Fetch current market bid price for the side we hold
+        const mktRaw = await kalshiFetch<Record<string, unknown>>(
+          "GET",
+          `/markets/${encodeURIComponent(ticker)}`
+        );
+        const mkt = (mktRaw.market ?? mktRaw) as Record<string, unknown>;
+
+        let currentBidCents: number;
+        if (side === "yes") {
+          const bidDollars = mkt.yes_bid_dollars as number | undefined;
+          const bidCentsRaw = mkt.yes_bid as number | undefined;
+          if (bidDollars && bidDollars > 0) {
+            currentBidCents = Math.round(bidDollars * 100);
+          } else if (bidCentsRaw && bidCentsRaw > 0) {
+            currentBidCents = bidCentsRaw;
+          } else {
+            console.log(`  ⚠️  TAKE-PROFIT: ${ticker} — no bid price available, skipping`);
+            continue;
+          }
+        } else {
+          const bidDollars = mkt.no_bid_dollars as number | undefined;
+          const bidCentsRaw = mkt.no_bid as number | undefined;
+          if (bidDollars && bidDollars > 0) {
+            currentBidCents = Math.round(bidDollars * 100);
+          } else if (bidCentsRaw && bidCentsRaw > 0) {
+            currentBidCents = bidCentsRaw;
+          } else {
+            console.log(`  ⚠️  TAKE-PROFIT: ${ticker} — no bid price available, skipping`);
+            continue;
+          }
+        }
+
+        const currentBidDollars = currentBidCents / 100;
+        const gainPct = ((currentBidDollars - entryCostDollars) / entryCostDollars) * 100;
+
+        if (gainPct < TAKE_PROFIT_PCT) {
+          console.log(`  📊 HOLD: ${ticker} ${side.toUpperCase()} entry=${(entryCostDollars * 100).toFixed(0)}c current=${currentBidCents}c gain=${gainPct.toFixed(1)}% (threshold: ${TAKE_PROFIT_PCT}%)`);
+          continue;
+        }
+
+        // Take profit — place sell order at current bid
+        console.log(`  💰 TAKE PROFIT: ${ticker} ${side.toUpperCase()} entry=${(entryCostDollars * 100).toFixed(0)}c current=${currentBidCents}c gain=${gainPct.toFixed(1)}% — SELLING`);
+
+        const sellBody = {
+          ticker,
+          action: "sell",
+          side,
+          count: Math.round(contracts),
+          type: "limit",
+          ...(side === "yes" ? { yes_price: currentBidCents } : { no_price: currentBidCents }),
+        };
+
+        const sellData = await kalshiFetch<Record<string, unknown>>("POST", "/portfolio/orders", sellBody);
+
+        const orderObj = sellData.order as Record<string, unknown> | undefined;
+        const orderId =
+          (orderObj?.order_id as string) ??
+          (sellData.order_id as string) ??
+          null;
+
+        if (!orderId) {
+          console.error(`  ❌ TAKE-PROFIT SELL FAILED: ${ticker} no order_id in response`);
+          continue;
+        }
+
+        console.log(`  ✅ SOLD: ${ticker} ${side.toUpperCase()} @ ${currentBidCents}c | order ${orderId} | +${gainPct.toFixed(1)}%`);
+
+        // Update Supabase trade: mark closed, record exit price + PnL
+        const pnl = currentBidDollars - entryCostDollars;
+        const pnlPct = gainPct / 100;
+        try {
+          await supabase
+            .from("trades")
+            .update({
+              status: "closed",
+              exit_price: currentBidDollars,
+              exit_value: currentBidDollars,
+              pnl,
+              pnl_pct: pnlPct,
+              exit_at: new Date().toISOString(),
+              notes: `TAKE-PROFIT: ${orderId} | +${gainPct.toFixed(1)}%`,
+            })
+            .eq("id", tradeRow.id);
+        } catch {
+          console.error(`  ⚠️  Trade update failed for ${ticker}`);
+        }
+
+        // Telegram alert
+        sendTelegramMessage(
+          `*💰 PROFIT TAKEN*\n\nTicker: ${ticker}\nSide: ${side.toUpperCase()}\nEntry: ${(entryCostDollars * 100).toFixed(0)}c\nExit: ${currentBidCents}c\nGain: +${gainPct.toFixed(1)}%\nP&L: +$${pnl.toFixed(2)}`
+        ).catch(() => {});
+
+      } catch (posErr) {
+        const msg = posErr instanceof Error ? posErr.message : String(posErr);
+        console.error(`  ⚠️  TAKE-PROFIT check failed for ${pos.ticker}: ${msg}`);
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  ⚠️  checkAndSellPositions failed: ${msg}`);
+  }
+}
+
 interface ClaudeSignal {
   vote: "YES" | "NO" | "NO_TRADE";
   probability: number;
@@ -796,6 +962,9 @@ async function pollKalshi(): Promise<void> {
     } catch {
       console.warn("  ⚠️  BTC price fetch failed — continuing without it");
     }
+
+    // Check open positions for take-profit opportunities (before new analysis)
+    await checkAndSellPositions();
 
     // Build memory context once per poll cycle (positions + trade history)
     const memoryContext = await buildMemoryContext();
