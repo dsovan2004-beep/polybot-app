@@ -1131,9 +1131,9 @@ async function pollKalshi(): Promise<void> {
         continue;
       }
 
-      // Volume filter — skip illiquid markets (500+ for quality signals)
+      // Volume filter — skip illiquid markets (100+ minimum)
       const vol24h = (m.volume_24h_fp ?? m.volume_24h ?? m.volume ?? 0) as number;
-      if (vol24h < 500) {
+      if (vol24h < 100) {
         skippedVolume++;
         totalFiltered++;
         continue;
