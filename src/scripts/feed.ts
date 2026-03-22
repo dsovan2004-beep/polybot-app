@@ -1329,8 +1329,8 @@ async function pollKalshi(): Promise<void> {
 
           if (coinPrice > 0) {
             const distance = Math.abs(coinPrice - threshold);
-            // Min/max distance: BTC $500-$3000, ETH $30-$150, SOL $2-$10
-            const minDistance = coinPrice > 10000 ? 500 : coinPrice > 500 ? 30 : 2;
+            // Min/max distance: BTC $250-$3000, ETH $20-$150, SOL $2-$10
+            const minDistance = coinPrice > 10000 ? 250 : coinPrice > 500 ? 20 : 2;
             const maxDistance = coinPrice > 10000 ? 3000 : coinPrice > 500 ? 150 : 10;
             if (distance < minDistance) {
               console.log(`  ⚡ SKIP: ${m.ticker} too close ($${distance.toFixed(0)} < $${minDistance} min)`);
