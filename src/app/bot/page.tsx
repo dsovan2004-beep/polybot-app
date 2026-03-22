@@ -932,7 +932,7 @@ export default function BotDashboard() {
               }}
             >
               {balanceData.paperMode ? "PAPER" : `Balance: $${balanceData.totalValue.toFixed(2)}`}
-              {balanceData.openPositions > 0 && ` | ${balanceData.openPositions} pos`}
+              {(() => { const active = (balanceData.positions ?? []).filter(p => Math.abs(p.market_exposure) > 0 || p.resting_orders_count > 0).length; return active > 0 ? ` | ${active} pos` : ""; })()}
             </span>
           )}
           {/* Last Telegram alert indicator */}
@@ -1084,12 +1084,14 @@ export default function BotDashboard() {
 
         {/* ── RISK SUMMARY BAR ── */}
         {balanceData && balanceData.positions.length > 0 && (() => {
-          const totalExposure = balanceData.positions.reduce(
+          const activePositions = balanceData.positions.filter(p => Math.abs(p.market_exposure) > 0 || p.resting_orders_count > 0);
+          if (activePositions.length === 0) return null;
+          const totalExposure = activePositions.reduce(
             (sum, p) => sum + Math.abs(p.market_exposure / 100), 0
           );
           const pctDeployed = balanceData.kalshi > 0 ? (totalExposure / balanceData.kalshi) * 100 : 0;
-          const posCount = balanceData.positions.length;
-          const largest = balanceData.positions.reduce(
+          const posCount = activePositions.length;
+          const largest = activePositions.reduce(
             (max, p) => {
               const exp = Math.abs(p.market_exposure / 100);
               return exp > max.exp ? { exp, title: p.title || p.ticker } : max;
@@ -1229,10 +1231,13 @@ export default function BotDashboard() {
         </div>
 
         {/* ── OPEN POSITIONS ── */}
-        {balanceData && balanceData.positions && balanceData.positions.length > 0 && (
+        {balanceData && balanceData.positions && (() => {
+          const activePositions = balanceData.positions.filter(p => Math.abs(p.market_exposure) > 0 || p.resting_orders_count > 0);
+          if (activePositions.length === 0) return null;
+          return (
           <div style={{ marginBottom: 24 }}>
             <p style={{ fontSize: 12, fontWeight: 600, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-              Open Positions ({balanceData.positions.length})
+              Open Positions ({activePositions.length})
             </p>
             <Card>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -1246,7 +1251,7 @@ export default function BotDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {balanceData.positions.map((pos) => {
+                  {activePositions.map((pos) => {
                     const title = pos.title || pos.ticker;
                     const side = pos.market_exposure >= 0 ? "YES" : "NO";
                     const exposureAbs = Math.abs(pos.market_exposure) / 100;
@@ -1285,7 +1290,8 @@ export default function BotDashboard() {
               </table>
             </Card>
           </div>
-        )}
+          );
+        })()}
 
         {/* ── MAIN 2-COLUMN GRID ── */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
