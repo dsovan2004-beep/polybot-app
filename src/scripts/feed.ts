@@ -428,7 +428,8 @@ async function autoExecTrade(
   marketId: string,
   strategy: string,
   confidence: number,
-  yesPrice: number
+  yesPrice: number,
+  isCrypto: boolean = false
 ): Promise<void> {
   try {
     // Paper mode gate
@@ -549,8 +550,35 @@ async function autoExecTrade(
     console.log(`  ✅ AUTO-EXEC: ${kalshiTicker} ${side.toUpperCase()} @ ${priceCents}c | order ${orderId}`);
 
     // Save trade to Supabase
+    // For crypto markets, ensure market exists first (may not have been saved via saveMarket)
+    let tradeMarketId = marketId;
+    if (isCrypto && !marketId) {
+      // Crypto market might not have a markets table entry — upsert one now
+      const { data: mktData, error: mktErr } = await supabase
+        .from("markets")
+        .upsert(
+          {
+            polymarket_id: kalshiTicker,
+            kalshi_ticker: kalshiTicker,
+            title: kalshiTicker,
+            category: "crypto",
+            current_price: yesPrice,
+            volume_24h: 0,
+            status: "active",
+          },
+          { onConflict: "polymarket_id" }
+        )
+        .select("id")
+        .single();
+      if (mktErr) {
+        console.error(`  ❌ TRADE SAVE FAILED: ${kalshiTicker} market upsert error: ${mktErr.message}`);
+      } else {
+        tradeMarketId = mktData?.id ?? marketId;
+      }
+    }
+
     const { error: tradeErr } = await supabase.from("trades").insert({
-      market_id: marketId,
+      market_id: tradeMarketId,
       direction: side,
       entry_price: yesPrice,
       shares: count,
@@ -560,7 +588,9 @@ async function autoExecTrade(
       notes: `AUTO-EXEC: ${orderId} | ${kalshiTicker} | conf:${confidence}%`,
     });
     if (tradeErr) {
-      console.error(`  ⚠️  Trade save failed: ${tradeErr.message}`);
+      console.error(`  ❌ TRADE SAVE FAILED: ${kalshiTicker} ${tradeErr.message}`);
+    } else {
+      console.log(`  ✅ TRADE SAVED: ${kalshiTicker} ${side.toUpperCase()} @ ${priceCents}c → Supabase`);
     }
 
     // Mark signal as acted on (best-effort — don't crash if this fails)
@@ -773,7 +803,8 @@ async function analyzeMarket(
   btcPrice: string,
   memoryContext: string = "",
   confThreshold: number = MIN_CONFIDENCE,
-  cryptoPrices: CryptoPrices | null = null
+  cryptoPrices: CryptoPrices | null = null,
+  isCrypto: boolean = false
 ): Promise<void> {
   if (killSwitchActive || !anthropic) return;
   if (analyzedMarkets.has(kalshiTicker)) return;
@@ -896,7 +927,7 @@ What is your analysis?`;
     if (finalVote !== "NO_TRADE" && confidence >= confThreshold && priceGap >= MIN_PRICE_GAP) {
       // Auto-execute the trade
       const side: "yes" | "no" = finalVote === "YES" ? "yes" : "no";
-      await autoExecTrade(kalshiTicker, side, marketId, strategy, confidence, yesPrice);
+      await autoExecTrade(kalshiTicker, side, marketId, strategy, confidence, yesPrice, isCrypto);
 
       const modeTag = PAPER_MODE ? "📝 PAPER" : "🤖 AUTO-EXECUTED";
       const alertMsg = [
@@ -1343,7 +1374,8 @@ async function pollKalshi(): Promise<void> {
         btcPrice,
         memoryContext,
         confThreshold,
-        cryptoPrices
+        cryptoPrices,
+        isCryptoShortTerm
       );
     }
 
