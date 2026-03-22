@@ -98,6 +98,7 @@ const MAX_POSITIONS = 8;       // Max simultaneous open positions
 const MIN_BALANCE_FLOOR = 5.00; // Never trade below this balance ($)
 const MAX_TRADE_DOLLARS = 1.25; // Max cost per single trade ($)
 const TAKE_PROFIT_PCT = 25;    // Sell when position is up 25%+
+const STOP_LOSS_PCT = -40;     // Sell when position is down 40%+
 
 const SPORTS_KEYWORDS = [
   "nba", "nfl", "ufc", "football", "basketball", "soccer",
@@ -644,14 +645,20 @@ async function checkAndSellPositions(): Promise<void> {
         const currentBidDollars = currentBidCents / 100;
         const gainPct = ((currentBidDollars - entryCostDollars) / entryCostDollars) * 100;
 
-        if (gainPct < TAKE_PROFIT_PCT) {
-          console.log(`  📊 HOLD: ${ticker} ${side.toUpperCase()} entry=${(entryCostDollars * 100).toFixed(0)}c current=${currentBidCents}c gain=${gainPct.toFixed(1)}% (threshold: ${TAKE_PROFIT_PCT}%)`);
+        // 3-way decision: take profit, stop loss, or hold
+        let sellReason: "take-profit" | "stop-loss" | null = null;
+        if (gainPct >= TAKE_PROFIT_PCT) {
+          sellReason = "take-profit";
+          console.log(`  💰 TAKE PROFIT: ${ticker} ${side.toUpperCase()} entry=${(entryCostDollars * 100).toFixed(0)}c current=${currentBidCents}c gain=${gainPct.toFixed(1)}% — SELLING`);
+        } else if (gainPct <= STOP_LOSS_PCT) {
+          sellReason = "stop-loss";
+          console.log(`  🛑 STOP LOSS: ${ticker} ${side.toUpperCase()} entry=${(entryCostDollars * 100).toFixed(0)}c current=${currentBidCents}c loss=${gainPct.toFixed(1)}% — SELLING`);
+        } else {
+          console.log(`  📊 HOLD: ${ticker} ${side.toUpperCase()} entry=${(entryCostDollars * 100).toFixed(0)}c current=${currentBidCents}c gain=${gainPct.toFixed(1)}% (TP:${TAKE_PROFIT_PCT}% SL:${STOP_LOSS_PCT}%)`);
           continue;
         }
 
-        // Take profit — place sell order at current bid
-        console.log(`  💰 TAKE PROFIT: ${ticker} ${side.toUpperCase()} entry=${(entryCostDollars * 100).toFixed(0)}c current=${currentBidCents}c gain=${gainPct.toFixed(1)}% — SELLING`);
-
+        // Sell order (shared by take-profit and stop-loss)
         const sellBody = {
           ticker,
           action: "sell",
@@ -670,11 +677,12 @@ async function checkAndSellPositions(): Promise<void> {
           null;
 
         if (!orderId) {
-          console.error(`  ❌ TAKE-PROFIT SELL FAILED: ${ticker} no order_id in response`);
+          console.error(`  ❌ ${sellReason.toUpperCase()} SELL FAILED: ${ticker} no order_id in response`);
           continue;
         }
 
-        console.log(`  ✅ SOLD: ${ticker} ${side.toUpperCase()} @ ${currentBidCents}c | order ${orderId} | +${gainPct.toFixed(1)}%`);
+        const gainSign = gainPct >= 0 ? "+" : "";
+        console.log(`  ✅ SOLD: ${ticker} ${side.toUpperCase()} @ ${currentBidCents}c | order ${orderId} | ${gainSign}${gainPct.toFixed(1)}% [${sellReason}]`);
 
         // Update Supabase trade: mark closed, record exit price + PnL
         const pnl = currentBidDollars - entryCostDollars;
@@ -689,7 +697,7 @@ async function checkAndSellPositions(): Promise<void> {
               pnl,
               pnl_pct: pnlPct,
               exit_at: new Date().toISOString(),
-              notes: `TAKE-PROFIT: ${orderId} | +${gainPct.toFixed(1)}%`,
+              notes: `${sellReason.toUpperCase()}: ${orderId} | ${gainSign}${gainPct.toFixed(1)}%`,
             })
             .eq("id", tradeRow.id);
         } catch {
@@ -697,8 +705,9 @@ async function checkAndSellPositions(): Promise<void> {
         }
 
         // Telegram alert
+        const tgEmoji = sellReason === "take-profit" ? "💰 PROFIT TAKEN" : "🛑 STOP LOSS HIT";
         sendTelegramMessage(
-          `*💰 PROFIT TAKEN*\n\nTicker: ${ticker}\nSide: ${side.toUpperCase()}\nEntry: ${(entryCostDollars * 100).toFixed(0)}c\nExit: ${currentBidCents}c\nGain: +${gainPct.toFixed(1)}%\nP&L: +$${pnl.toFixed(2)}`
+          `*${tgEmoji}*\n\nTicker: ${ticker}\nSide: ${side.toUpperCase()}\nEntry: ${(entryCostDollars * 100).toFixed(0)}c\nExit: ${currentBidCents}c\nGain: ${gainSign}${gainPct.toFixed(1)}%\nP&L: ${gainSign}$${Math.abs(pnl).toFixed(2)}`
         ).catch(() => {});
 
       } catch (posErr) {
