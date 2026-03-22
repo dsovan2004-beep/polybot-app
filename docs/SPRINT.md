@@ -164,24 +164,80 @@ Polymarket → Kalshi ticker mismatch was causing all EXEC failures. Instead of 
 
 ---
 
-## Sprint 8: Scale to $15,000/month — IN PROGRESS 🔄
-**Goal:** Implement MoonDev strategies, prove win rate, scale capital, build PolyBot SaaS
+## Sprint 7b: Dashboard Polish + Memory — COMPLETE ✅
+**Dates:** Mar 21
+**Goal:** Ship 19 dashboard fixes, add Claude memory injection, harden guardrails
 
-| Task | Status |
-|------|--------|
-| Expiry filter added (365 days, year ≤2028) | ✅ COMPLETE |
-| Implement MACD(6/26/5) strategy on BTC 1-min candles | ⬜ NOT STARTED |
-| Wire Binance liquidation WebSocket feed | ⬜ NOT STARTED |
-| Combine MACD + liquidation = 85% confidence signal | ⬜ NOT STARTED |
-| Backtest MACD + liquidation on Kalshi BTC markets | ⬜ NOT STARTED |
-| Run RBI framework: Research → Backtest → Incubate → Scale | ⬜ NOT STARTED |
-| Validate 30 trades win rate | ⬜ NOT STARTED |
-| Scale to $100 when 67%+ win rate proven | ⬜ NOT STARTED |
-| Build PolyBot SaaS subscription tier | ⬜ NOT STARTED |
-| Target: 100 subscribers x $149/month = $14,900 | ⬜ NOT STARTED |
+| # | Task | Status |
+|---|------|--------|
+| 1 | Open Positions panel — live with market titles, side (YES/NO), exposure, resting orders | ✅ COMPLETE |
+| 2 | Positions: side regression fixed, $NaN fixed, ticker→title resolution fixed | ✅ COMPLETE |
+| 3 | P&L / Win Rate — wired to live Kalshi + Supabase data, polls every 30s | ✅ COMPLETE |
+| 4 | Signal History — UUIDs replaced with market titles via Supabase FK join, scroll height 600px | ✅ COMPLETE |
+| 5 | Confidence anchoring — Claude prompt updated with 6-tier calibration scale (10-25 / 25-40 / 40-55 / 55-70 / 70-85 / 85-100), removed 'don't be overconfident' anchor | ✅ COMPLETE |
+| 6 | Kill Switch confirm modal — styled dark modal, shows position count, Cancel + Confirm Kill buttons, Escape/outside-click to dismiss | ✅ COMPLETE |
+| 7 | EXEC threshold visibility — subtitle under Markets & Signals header, tooltip on EXEC button with actual conf/gap/strategy values | ✅ COMPLETE |
+| 8 | Markets filter tabs — All / EXEC / LIVE / NO_TRADE with live counts, 20-item cap on All, no cap on filtered tabs | ✅ COMPLETE |
+| 9 | Memory injection — buildMemoryContext() runs once per poll cycle, injects open positions + recent losses + win patterns into every Claude signal analysis call | ✅ COMPLETE |
+| 10 | Risk/exposure summary bar — green/yellow/red color-coded, shows total deployed $, % of balance, position count, largest position | ✅ COMPLETE |
+| 11 | Telegram alert status — header shows 'Last alert: Xm ago' color-coded green/yellow/red, queries most recent YES/NO signal from Supabase | ✅ COMPLETE |
+| 12 | Guardrails status row — shows all 8 active guardrails with exact threshold values from feed.ts | ✅ COMPLETE |
+| 13 | P&L sparkline — SVG sparkline in Total P&L card, queries last 10 resolved trades for cumulative trend, green/red/gray | ✅ COMPLETE |
+| 14 | Signal reasoning expand — click any Signal History card to expand/collapse full Claude reasoning, chevron indicator | ✅ COMPLETE |
+| 15 | Whale Watch timestamps — hover shows exact timestamp via title attribute | ✅ COMPLETE |
+| 16 | LIVE badge pulse — CSS @keyframes livePulse animation on the orange dot | ✅ COMPLETE |
+| 17 | USDC Rebates tooltip — info icon with 'Earned from providing liquidity on executed trades' | ✅ COMPLETE |
+| 18 | Text contrast global fix — all muted secondary text bumped from rgba low-opacity to #94a3b8 | ✅ COMPLETE |
+| 19 | Security fix — GUARDRAIL #8 added (no curl/API push), revoked exposed GitHub token, new token in .env.local | ✅ COMPLETE |
 
-**MoonDev Strategy Implementation Order:**
-1. MACD(6/26/5) on Binance BTC 1-min candles → signal when histogram > 10
-2. Binance liquidation feed → signal when $500K+ longs liquidated in 60s
-3. Combined signal → both MACD + liquidation agree = 85% confidence
-4. RBI: Backtest all 3 → incubate 24-72hrs → scale only after proven
+**Files modified:**
+- src/app/bot/page.tsx (all 17 dashboard fixes)
+- src/app/api/balance/route.ts (P&L stats, lastAlertAt, pnlHistory)
+- src/lib/supabase.ts (Signal History FK join)
+- src/scripts/feed.ts (confidence calibration, memory injection)
+- CLAUDE.md (GUARDRAIL #8)
+
+---
+
+## Sprint 8: Autonomous Trading — COMPLETE ✅
+**Dates:** Mar 22
+**Goal:** Make bot fully autonomous with risk management, position exits, and daily limits
+
+| # | Task | Status |
+|---|------|--------|
+| 1 | Fix #1: Tiered expiry filter — 180 day hard cap, dynamic confidence thresholds (67/72/78%) by days remaining, markets sorted by daysLeft ascending | ✅ COMPLETE |
+| 2 | Fix #2: Auto EXEC — bot places orders autonomously via autoExecTrade() in feed.ts, fetches live ask price, places limit orders via kalshiFetch | ✅ COMPLETE |
+| 3 | Fix #3: Position sizing — MAX_POSITIONS=8, MIN_BALANCE_FLOOR=$5, MAX_TRADE_DOLLARS=$1.25 | ✅ COMPLETE |
+| 4 | Fix #4: Skip BTC price range markets — silently filtered before analysis loop (saves 40+ Claude calls/cycle) | ✅ COMPLETE |
+| 5 | Fix #5: Auto sell take-profit — checkAndSellPositions() runs every poll cycle, sells at +25% gain | ✅ COMPLETE |
+| 6 | Fix #6: Stop loss — sells at -40% loss, shared sell block with take-profit, 3-way decision (profit/loss/hold) | ✅ COMPLETE |
+| 7 | Fix #7: Daily P&L cap — getDailyPnL() blocks new trades at +$3 target or -$5 loss limit. BTC log noise silenced. | ✅ COMPLETE |
+
+**Key Milestone — Sprint 8:**
+- Bot is fully autonomous: PAPER_MODE=false, live trading active
+- 7 safety mechanisms: expiry filter, position cap, balance floor, trade cost cap, take-profit, stop-loss, daily P&L cap
+- All changes in src/scripts/feed.ts only
+
+**Files modified:**
+- src/scripts/feed.ts (all 7 fixes)
+- CLAUDE.md (sprint status update)
+
+---
+
+## Sprint 9: Dashboard Intelligence — IN PROGRESS 🔄
+**Goal:** Trade visibility, strategy analytics, confidence-based sizing
+
+| # | Task | Status |
+|---|------|--------|
+| 8 | Fix #8: Trades log dashboard tab — full trade history with P&L per trade | ⬜ NOT STARTED |
+| 9 | Fix #9: Win rate by strategy — breakdown showing which strategies perform best | ⬜ NOT STARTED |
+| 10 | Fix #10: Position sizing by confidence — scale trade size based on confidence level | ⬜ NOT STARTED |
+
+**Future Backlog (unscheduled):**
+- Implement MACD(6/26/5) strategy on BTC 1-min candles
+- Wire Binance liquidation WebSocket feed
+- Combine MACD + liquidation = 85% confidence signal
+- RBI framework: Research → Backtest → Incubate → Scale
+- Validate 30 trades win rate → scale to $100
+- Build PolyBot SaaS subscription tier
+- Kalshi US app migration eval

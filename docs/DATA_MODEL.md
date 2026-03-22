@@ -18,14 +18,29 @@ id UUID PRIMARY KEY, date DATE UNIQUE, starting_balance DECIMAL(12,2), ending_ba
 ## Table: whale_activity (added Sprint 4)
 id UUID PRIMARY KEY, market_id UUID REFERENCES markets(id) ON DELETE CASCADE, wallet_address TEXT, trade_size_usd DECIMAL(12,2), direction TEXT, price_at_trade DECIMAL(5,4), created_at TIMESTAMPTZ DEFAULT NOW()
 
+## Sprint 7b Usage Notes (No Schema Changes)
+No new tables or columns added. Existing tables queried:
+- signals: market_id (FK join to markets.title), consensus, confidence, reasoning, created_at — used for Signal History title resolution, Telegram alert timestamp, filter tabs
+- trades: pnl, status, created_at — used for P&L sparkline (cumulative over last 10 resolved), win rate calculation
+- markets: title — joined via signals.market_id FK for dashboard display
+
+## Sprint 8 Usage Notes (No Schema Changes)
+trades table is now actively used by feed.ts autonomous trading:
+- INSERT (autoExecTrade): market_id, direction, entry_price, shares, entry_cost, strategy, status='open', notes
+- UPDATE (checkAndSellPositions): status='closed', exit_price, exit_value, pnl, pnl_pct, exit_at, notes — triggered by take-profit (+25%) or stop-loss (-40%)
+- SELECT (getDailyPnL): SUM(pnl) WHERE status='closed' AND exit_at >= today UTC start — blocks new trades at +$3 or -$5 daily limit
+- SELECT (checkAndSellPositions): trades.entry_cost, trades.direction via markets.polymarket_id → trades.market_id FK join
+- NOTE: 5 manual positions placed before auto-exec (Sprint 7) have no Supabase trade records — checkAndSellPositions() logs a warning and skips them gracefully
+
 ## Feed Script Data Flow (feed.ts)
-- Connects to Polymarket WS (wss://ws-live-data.polymarket.com) on startup
-- Subscribes to activity/trades topic
-- Filters: $500+ USD, no sports keywords, price 0.02-0.98
-- Saves qualifying trades to markets table (upsert on polymarket_id)
-- Saves $500+ trades to whale_activity table
-- Stats logged every 60 seconds to console
-- Auto-reconnects on disconnect (code 1006 is normal)
+- Polls Kalshi REST API (GET /events) every 30 seconds
+- Filters: volume 500+, no sports, price 0.02-0.98, expiry ≤180 days, no BTC price range markets
+- Saves qualifying markets to markets table (upsert on polymarket_id = kalshi_ticker)
+- Claude analyzes inline → saves signals to signals table
+- autoExecTrade() places live Kalshi orders → saves trades to trades table
+- checkAndSellPositions() runs every cycle → auto-sells at +25% or -40%
+- getDailyPnL() blocks new trades at +$3 profit or -$5 loss daily cap
+- Telegram alerts on actionable signals and trade executions
 
 ## Railway Deployment Notes
 - feed.ts deployed as worker process (not web)

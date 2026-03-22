@@ -61,12 +61,32 @@
 - **FIRST REAL TRADE: March 20, 2026 4:24 PM PT** — NO on Elon Musk first trillionaire, 15% price, $1 payout
 - Balance: $24.84, 1 open position
 
-## Phase 8 — Scale to $15,000/month: IN PROGRESS 🔄
-- Add 90-day expiry filter to feed (near-term markets only)
-- Validate 30 trades win rate
-- Scale to $100 when 67%+ win rate proven
+## Phase 7b — Dashboard Polish + Memory: COMPLETE ✅
+- Dashboard: ALL 19 planned fixes shipped (positions, P&L, filters, sparkline, risk bar, guardrails, expand reasoning, text contrast, pulse animation, tooltips)
+- Memory injection: Layer 1 (open positions) live, Layers 2+3 (losses/wins) ready — need resolved trades to populate
+- Security: GUARDRAIL #8 added, exposed token revoked and rotated
+- Confidence calibration: 6-tier scale replacing 45% anchoring
+- Files: page.tsx, balance/route.ts, supabase.ts, feed.ts, CLAUDE.md
+
+## Phase 8 — Autonomous Trading: COMPLETE ✅
+- Bot fully autonomous: PAPER_MODE=false, live trading active
+- 7 fixes shipped: tiered expiry, auto-exec, position sizing, BTC skip, take-profit (+25%), stop-loss (-40%), daily P&L cap (+$3/-$5)
+- Safety stack: MAX_POSITIONS=8, MIN_BALANCE_FLOOR=$5, MAX_TRADE_DOLLARS=$1.25, MAX_EXPIRY_DAYS=180
+- checkAndSellPositions() runs every poll cycle (auto exit management)
+- getDailyPnL() blocks new trades when daily limits hit
+- All changes in feed.ts only — no dashboard or API changes
+
+## Phase 9 — Dashboard Intelligence: IN PROGRESS 🔄
+- Fix #8: Trades log dashboard tab (full trade history with P&L per trade)
+- Fix #9: Win rate by strategy (breakdown showing which strategies perform best)
+- Fix #10: Position sizing by confidence (scale trade size based on confidence level)
+
+### Future Backlog (unscheduled)
+- MACD(6/26/5) + Binance liquidation combined strategy
+- RBI framework: Research → Backtest → Incubate → Scale
+- Validate 30 trades win rate → scale to $100
 - Build PolyBot SaaS subscription tier
-- Target: 100 subscribers x $149/month = $14,900/month
+- Kalshi US app migration eval
 
 ### $15K Scaling Roadmap
 | Timeline | Capital | Monthly Return |
