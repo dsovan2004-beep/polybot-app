@@ -772,7 +772,8 @@ async function analyzeMarket(
   expirationRaw: string,
   btcPrice: string,
   memoryContext: string = "",
-  confThreshold: number = MIN_CONFIDENCE
+  confThreshold: number = MIN_CONFIDENCE,
+  cryptoPrices: CryptoPrices | null = null
 ): Promise<void> {
   if (killSwitchActive || !anthropic) return;
   if (analyzedMarkets.has(kalshiTicker)) return;
@@ -799,7 +800,11 @@ Market: ${title}
 Kalshi Ticker: ${kalshiTicker}
 Category: ${category}
 Current YES price: ${yesPrice.toFixed(2)} (implied probability: ${(yesPrice * 100).toFixed(1)}%)
-Volume: $${volume.toLocaleString()}${btcPrice ? `\nCurrent BTC price: $${btcPrice}` : ""}
+Volume: $${volume.toLocaleString()}${btcPrice ? `\nCurrent BTC price: $${btcPrice}` : ""}${
+      cryptoPrices && kalshiTicker.toLowerCase().includes("updown")
+        ? `\nLIVE MARKET DATA (Coinbase): BTC=$${cryptoPrices.btc.toLocaleString()} (${cryptoPrices.btcTrend5m >= 0 ? "+" : ""}${cryptoPrices.btcTrend5m.toFixed(2)}% 5min). ETH=$${cryptoPrices.eth.toLocaleString()}. SOL=$${cryptoPrices.sol.toFixed(0)}. XRP=$${cryptoPrices.xrp.toFixed(2)}. Use the 5-min trend to assess UP or DOWN direction for the next 15 minutes. Rising momentum = lean UP. Falling momentum = lean DOWN.`
+        : ""
+    }
 
 What is your analysis?`;
 
@@ -984,6 +989,90 @@ async function buildMemoryContext(): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
+// Live crypto prices — Coinbase API (no key needed, US-friendly)
+// Returns null if any fetch fails (fail open — updown markets still analyzed, just without price data)
+// ---------------------------------------------------------------------------
+interface CryptoPrices {
+  btc: number; eth: number; sol: number; xrp: number;
+  btcTrend5m: number; // percent change over last 5 minutes
+}
+
+async function fetchLiveCryptoPrices(): Promise<CryptoPrices | null> {
+  try {
+    const coins = ["BTC", "ETH", "SOL", "XRP"] as const;
+    const spots: Record<string, number> = {};
+
+    // Fetch spot prices in parallel (5s timeout each)
+    const spotResults = await Promise.all(
+      coins.map(async (coin) => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        try {
+          const res = await fetch(
+            `https://api.coinbase.com/v2/prices/${coin}-USD/spot`,
+            { signal: controller.signal }
+          );
+          if (!res.ok) return null;
+          const data = (await res.json()) as { data: { amount: string } };
+          return { coin, price: parseFloat(data.data.amount) };
+        } catch {
+          return null;
+        } finally {
+          clearTimeout(timer);
+        }
+      })
+    );
+
+    for (const r of spotResults) {
+      if (!r || isNaN(r.price)) return null;
+      spots[r.coin] = r.price;
+    }
+
+    // Fetch BTC 5-min candles for trend (2 candles, 300s granularity)
+    let btcTrend5m = 0;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      try {
+        const res = await fetch(
+          "https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=300&limit=2",
+          { signal: controller.signal }
+        );
+        if (res.ok) {
+          const candles = (await res.json()) as number[][];
+          if (candles.length >= 2) {
+            const currentClose = candles[0][4];
+            const prevClose = candles[1][4];
+            if (prevClose > 0) {
+              btcTrend5m = ((currentClose - prevClose) / prevClose) * 100;
+            }
+          }
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      // Trend unavailable — continue with 0
+    }
+
+    const prices: CryptoPrices = {
+      btc: spots.BTC, eth: spots.ETH, sol: spots.SOL, xrp: spots.XRP,
+      btcTrend5m,
+    };
+
+    const trendSign = btcTrend5m >= 0 ? "+" : "";
+    console.log(
+      `  💰 Live prices: BTC=$${prices.btc.toLocaleString()} (${trendSign}${btcTrend5m.toFixed(2)}% 5m) ` +
+      `ETH=$${prices.eth.toLocaleString()} SOL=$${prices.sol.toFixed(0)} XRP=$${prices.xrp.toFixed(2)}`
+    );
+    return prices;
+  } catch {
+    console.warn("  ⚠️  Coinbase prices fetch failed — continuing without crypto data");
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Kalshi polling loop
 // ---------------------------------------------------------------------------
 
@@ -1004,6 +1093,9 @@ async function pollKalshi(): Promise<void> {
     } catch {
       console.warn("  ⚠️  BTC price fetch failed — continuing without it");
     }
+
+    // Fetch live crypto prices for updown markets (Coinbase, once per cycle)
+    const cryptoPrices = await fetchLiveCryptoPrices();
 
     // Check open positions for take-profit opportunities (before new analysis)
     await checkAndSellPositions();
@@ -1106,14 +1198,18 @@ async function pollKalshi(): Promise<void> {
         totalFiltered++;
         continue;
       }
-      // BTC price range filter — no live price data to assess these (before 📅 log to reduce noise)
+      // BTC price range filter — skip price range markets but ALLOW updown markets (15-min crypto)
       const titleLower = m.title.toLowerCase();
-      if (
-        (m.ticker.startsWith("KXBTC-") && titleLower.includes("price range")) ||
-        titleLower.includes("bitcoin price range")
-      ) {
-        totalFiltered++;
-        continue;
+      const tickerLower = m.ticker.toLowerCase();
+      const isUpDown = tickerLower.includes("updown");
+      if (!isUpDown) {
+        if (
+          (m.ticker.startsWith("KXBTC-") && titleLower.includes("price range")) ||
+          titleLower.includes("bitcoin price range")
+        ) {
+          totalFiltered++;
+          continue;
+        }
       }
 
       console.log(`  📅 ${m.ticker} daysLeft=${daysLeft} confThreshold=${confThreshold}%`);
@@ -1171,7 +1267,8 @@ async function pollKalshi(): Promise<void> {
         expirationRaw,
         btcPrice,
         memoryContext,
-        confThreshold
+        confThreshold,
+        cryptoPrices
       );
     }
 
