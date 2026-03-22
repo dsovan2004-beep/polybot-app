@@ -1115,7 +1115,11 @@ async function pollKalshi(): Promise<void> {
       "/events?status=open&with_nested_markets=true&limit=200&series_ticker=KXBTC&sort_by=close_time&sort_direction=asc",
       "/events?status=open&with_nested_markets=true&limit=200&series_ticker=KXFED&sort_by=close_time&sort_direction=asc",
       "/events?status=open&with_nested_markets=true&limit=200&sort_by=close_time&sort_direction=asc",
-      // Crypto short-term queries removed — all returned NONE. Using discovery dump to find correct tickers.
+      // Crypto short-term — /markets endpoint with series_ticker (confirmed working)
+      "/markets?series_ticker=KXBTCD&status=open&limit=200",   // BTC hourly above/below
+      "/markets?series_ticker=KXBTC15M&status=open&limit=200", // BTC 15-min up/down
+      "/markets?series_ticker=KXETHD&status=open&limit=200",   // ETH hourly
+      "/markets?series_ticker=KXSOLD&status=open&limit=200",   // SOL hourly
     ];
 
     let allMarkets: KalshiMarketFromAPI[] = [];
@@ -1154,63 +1158,13 @@ async function pollKalshi(): Promise<void> {
     totalMarketsFound = allMarkets.length;
     console.log(`  📦 ${allMarkets.length} markets (deduped) from ${totalEvents} events across ${endpoints.length} queries`);
 
-    // Debug: dump ALL unique ticker prefixes (first poll only) — discovery mode
+    // Log crypto market count on first poll
     if (totalPolled === 1) {
-      // Extract prefix = letters before first dash or digits
-      const prefixCounts = new Map<string, number>();
-      for (const m of allMarkets) {
-        const prefix = m.ticker.replace(/-.*$/, "").replace(/\d{2,}.*$/, "").toUpperCase() || m.ticker.split("-")[0].toUpperCase();
-        prefixCounts.set(prefix, (prefixCounts.get(prefix) || 0) + 1);
-      }
-      const sorted = [...prefixCounts.entries()].sort((a, b) => b[1] - a[1]);
-      console.log(`  🔍 ALL TICKER PREFIXES (${sorted.length} unique):`);
-      for (const [prefix, count] of sorted) {
-        console.log(`      ${prefix}: ${count} markets`);
-      }
-      // Also dump any tickers containing "btc", "eth", "sol", "crypto", "coin", "updown"
-      const cryptoKeywords = ["btc", "eth", "sol", "xrp", "crypto", "coin", "updown", "bitcoin", "ether"];
-      const cryptoMatches = allMarkets
-        .filter((m) => {
-          const t = (m.ticker + " " + (m.title || "")).toLowerCase();
-          return cryptoKeywords.some((kw) => t.includes(kw));
-        })
-        .slice(0, 20)
-        .map((m) => `${m.ticker} → ${(m.title || "").slice(0, 60)}`);
-      console.log(`  🪙 Crypto-related markets (${cryptoMatches.length}):`);
-      for (const line of cryptoMatches) {
-        console.log(`      ${line}`);
-      }
-
-      // --- Crypto API endpoint discovery (first poll only) ---
-      console.log(`\n  🔬 CRYPTO API DISCOVERY — testing 4 endpoint formats for kxbtcd...`);
-      const cryptoTestPaths = [
-        "/markets?series_ticker=KXBTCD&status=open&limit=10",
-        "/markets?event_ticker=KXBTCD-26MAR22&status=open&limit=10",
-        "/events/KXBTCD-26MAR22/markets",
-        "/markets?status=open&limit=10&cursor=KXBTCD",
-      ];
-      for (const testPath of cryptoTestPaths) {
-        try {
-          const fullPath = `${KALSHI_API_PREFIX}${testPath}`;
-          const ts = String(Date.now());
-          const sig = signRequest(KALSHI_PRIVATE_KEY!, ts, "GET", fullPath);
-          const url = `${KALSHI_HOST}${fullPath}`;
-          const resp = await fetch(url, {
-            method: "GET",
-            headers: {
-              "Content-Type": "application/json",
-              "KALSHI-ACCESS-KEY": KALSHI_API_KEY!,
-              "KALSHI-ACCESS-SIGNATURE": sig,
-              "KALSHI-ACCESS-TIMESTAMP": ts,
-            },
-          });
-          const body = await resp.text();
-          console.log(`    ${resp.status} ${testPath}`);
-          console.log(`    → ${body.slice(0, 200)}`);
-        } catch (err) {
-          console.log(`    ERR ${testPath}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
+      const cryptoCount = allMarkets.filter((m) => {
+        const t = m.ticker.toLowerCase();
+        return t.startsWith("kxbtcd") || t.startsWith("kxbtc15m") || t.startsWith("kxethd") || t.startsWith("kxsold");
+      }).length;
+      console.log(`  🪙 Crypto short-term markets fetched: ${cryptoCount}`);
     }
 
     // Debug: log first market to see actual API shape
