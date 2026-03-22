@@ -94,6 +94,9 @@ const PRICE_MIN = 0.02;
 const PRICE_MAX = 0.98;
 const POLL_INTERVAL_MS = 30_000; // 30 seconds
 const PAPER_MODE = false; // Set true to log trades without placing real orders
+const MAX_POSITIONS = 8;       // Max simultaneous open positions
+const MIN_BALANCE_FLOOR = 5.00; // Never trade below this balance ($)
+const MAX_TRADE_DOLLARS = 1.25; // Max cost per single trade ($)
 
 const SPORTS_KEYWORDS = [
   "nba", "nfl", "ufc", "football", "basketball", "soccer",
@@ -411,6 +414,33 @@ async function autoExecTrade(
       return;
     }
 
+    // Safety Check 1 — Max positions cap
+    try {
+      const posData = await kalshiFetch<{ market_positions: unknown[] }>(
+        "GET",
+        "/portfolio/positions?settlement_status=unsettled"
+      );
+      const posCount = (posData.market_positions ?? []).length;
+      if (posCount >= MAX_POSITIONS) {
+        console.log(`  🚫 SKIP AUTO-EXEC: max positions reached (${posCount}/${MAX_POSITIONS})`);
+        return;
+      }
+    } catch (posErr) {
+      console.warn(`  ⚠️  Positions check failed (continuing): ${posErr instanceof Error ? posErr.message : String(posErr)}`);
+    }
+
+    // Safety Check 2 — Balance floor
+    try {
+      const balData = await kalshiFetch<{ balance: number }>("GET", "/portfolio/balance");
+      const balanceDollars = balData.balance / 100; // Kalshi returns cents
+      if (balanceDollars < MIN_BALANCE_FLOOR) {
+        console.log(`  🚫 SKIP AUTO-EXEC: balance too low ($${balanceDollars.toFixed(2)} < $${MIN_BALANCE_FLOOR} floor)`);
+        return;
+      }
+    } catch (balErr) {
+      console.warn(`  ⚠️  Balance check failed (continuing): ${balErr instanceof Error ? balErr.message : String(balErr)}`);
+    }
+
     // Fetch live market data to get current ask price for immediate fill
     const mktRaw = await kalshiFetch<Record<string, unknown>>(
       "GET",
@@ -439,6 +469,13 @@ async function autoExecTrade(
       } else {
         priceCents = Math.round((1 - yesPrice) * 100);
       }
+    }
+
+    // Safety Check 3 — Max trade cost
+    const tradeCostDollars = priceCents / 100;
+    if (tradeCostDollars > MAX_TRADE_DOLLARS) {
+      console.log(`  🚫 SKIP AUTO-EXEC: trade cost $${tradeCostDollars.toFixed(2)} exceeds $${MAX_TRADE_DOLLARS} max`);
+      return;
     }
 
     // Sanity: price must be 1-99 cents
@@ -884,6 +921,17 @@ async function pollKalshi(): Promise<void> {
       // Sports filter — skip sports markets entirely
       if (isSports(m.title)) {
         skippedSports++;
+        totalFiltered++;
+        continue;
+      }
+
+      // BTC price range filter — no live price data to assess these
+      const titleLower = m.title.toLowerCase();
+      if (
+        (m.ticker.startsWith("KXBTC-") && titleLower.includes("price range")) ||
+        titleLower.includes("bitcoin price range")
+      ) {
+        console.log(`  ⚡ SKIP: ${m.ticker} BTC price range market (no live price data)`);
         totalFiltered++;
         continue;
       }
