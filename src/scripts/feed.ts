@@ -1115,13 +1115,7 @@ async function pollKalshi(): Promise<void> {
       "/events?status=open&with_nested_markets=true&limit=200&series_ticker=KXBTC&sort_by=close_time&sort_direction=asc",
       "/events?status=open&with_nested_markets=true&limit=200&series_ticker=KXFED&sort_by=close_time&sort_direction=asc",
       "/events?status=open&with_nested_markets=true&limit=200&sort_by=close_time&sort_direction=asc",
-      // Crypto short-term markets — /markets endpoint with ticker prefix (lowercase + uppercase)
-      "/markets?status=open&limit=100&ticker=kxbtc15m",   // BTC 15-min up/down
-      "/markets?status=open&limit=100&ticker=kxbtcd",     // BTC hourly above/below
-      "/markets?status=open&limit=100&ticker=kxethd",     // ETH hourly
-      "/markets?status=open&limit=100&ticker=kxsold",     // SOL hourly
-      "/markets?status=open&limit=100&ticker=KXBTC15M",   // uppercase fallback
-      "/markets?status=open&limit=100&ticker=KXBTCD",     // uppercase fallback
+      // Crypto short-term queries removed — all returned NONE. Using discovery dump to find correct tickers.
     ];
 
     let allMarkets: KalshiMarketFromAPI[] = [];
@@ -1160,16 +1154,32 @@ async function pollKalshi(): Promise<void> {
     totalMarketsFound = allMarkets.length;
     console.log(`  📦 ${allMarkets.length} markets (deduped) from ${totalEvents} events across ${endpoints.length} queries`);
 
-    // Debug: show crypto short-term tickers found (first poll only)
+    // Debug: dump ALL unique ticker prefixes (first poll only) — discovery mode
     if (totalPolled === 1) {
-      const cryptoTickers = allMarkets
+      // Extract prefix = letters before first dash or digits
+      const prefixCounts = new Map<string, number>();
+      for (const m of allMarkets) {
+        const prefix = m.ticker.replace(/-.*$/, "").replace(/\d{2,}.*$/, "").toUpperCase() || m.ticker.split("-")[0].toUpperCase();
+        prefixCounts.set(prefix, (prefixCounts.get(prefix) || 0) + 1);
+      }
+      const sorted = [...prefixCounts.entries()].sort((a, b) => b[1] - a[1]);
+      console.log(`  🔍 ALL TICKER PREFIXES (${sorted.length} unique):`);
+      for (const [prefix, count] of sorted) {
+        console.log(`      ${prefix}: ${count} markets`);
+      }
+      // Also dump any tickers containing "btc", "eth", "sol", "crypto", "coin", "updown"
+      const cryptoKeywords = ["btc", "eth", "sol", "xrp", "crypto", "coin", "updown", "bitcoin", "ether"];
+      const cryptoMatches = allMarkets
         .filter((m) => {
-          const t = m.ticker.toLowerCase();
-          return t.includes("updown") || t.startsWith("kxbtc15m") || t.startsWith("kxbtcd") || t.startsWith("kxethd") || t.startsWith("kxsold");
+          const t = (m.ticker + " " + (m.title || "")).toLowerCase();
+          return cryptoKeywords.some((kw) => t.includes(kw));
         })
-        .slice(0, 5)
-        .map((m) => m.ticker);
-      console.log(`  🔍 Crypto tickers found: ${cryptoTickers.length > 0 ? cryptoTickers.join(", ") : "NONE — series tickers may be wrong"}`);
+        .slice(0, 20)
+        .map((m) => `${m.ticker} → ${(m.title || "").slice(0, 60)}`);
+      console.log(`  🪙 Crypto-related markets (${cryptoMatches.length}):`);
+      for (const line of cryptoMatches) {
+        console.log(`      ${line}`);
+      }
     }
 
     // Debug: log first market to see actual API shape
@@ -1211,17 +1221,7 @@ async function pollKalshi(): Promise<void> {
       // Accept both "open" and "active" as valid tradeable statuses
       if (m.status !== "open" && m.status !== "active") { skippedStatus++; continue; }
 
-      // Tiered expiry filter — getDynamicConfidenceThreshold returns null for SKIP
-      const confThreshold = getDynamicConfidenceThreshold(daysLeft);
-      if (confThreshold === null) {
-        if (daysLeft > MAX_EXPIRY_DAYS) {
-          console.log(`  ⏰ SKIP: ${m.ticker} expires in ${daysLeft} days (>180 day cap)`);
-        }
-        skippedExpiry++;
-        totalFiltered++;
-        continue;
-      }
-      // BTC price range filter — skip price range markets but ALLOW crypto short-term markets
+      // Detect crypto short-term markets BEFORE expiry filter
       const titleLower = m.title.toLowerCase();
       const tickerLower = m.ticker.toLowerCase();
       const isCryptoShortTerm =
@@ -1230,7 +1230,27 @@ async function pollKalshi(): Promise<void> {
         tickerLower.startsWith("kxbtcd") ||
         tickerLower.startsWith("kxethd") ||
         tickerLower.startsWith("kxsold");
-      if (!isCryptoShortTerm) {
+
+      let confThreshold: number;
+
+      if (isCryptoShortTerm) {
+        // Crypto short-term markets expire today by design — bypass expiry filter entirely
+        confThreshold = 67; // use normal threshold
+        console.log(`  🪙 CRYPTO PASS: ${m.ticker} daysLeft=${daysLeft} (expiry bypass) confThreshold=${confThreshold}%`);
+      } else {
+        // Tiered expiry filter — getDynamicConfidenceThreshold returns null for SKIP
+        const threshold = getDynamicConfidenceThreshold(daysLeft);
+        if (threshold === null) {
+          if (daysLeft > MAX_EXPIRY_DAYS) {
+            console.log(`  ⏰ SKIP: ${m.ticker} expires in ${daysLeft} days (>180 day cap)`);
+          }
+          skippedExpiry++;
+          totalFiltered++;
+          continue;
+        }
+        confThreshold = threshold;
+
+        // BTC price range filter — skip price range markets (non-crypto only)
         if (
           (m.ticker.startsWith("KXBTC-") && titleLower.includes("price range")) ||
           titleLower.includes("bitcoin price range")
@@ -1238,9 +1258,9 @@ async function pollKalshi(): Promise<void> {
           totalFiltered++;
           continue;
         }
-      }
 
-      console.log(`  📅 ${m.ticker} daysLeft=${daysLeft} confThreshold=${confThreshold}%`);
+        console.log(`  📅 ${m.ticker} daysLeft=${daysLeft} confThreshold=${confThreshold}%`);
+      }
 
       // Price — use last_price_dollars (most reliable from events endpoint)
       // parseFloat ensures string values from API become real numbers
