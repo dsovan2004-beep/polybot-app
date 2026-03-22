@@ -1221,7 +1221,6 @@ async function pollKalshi(): Promise<void> {
       if (isCryptoShortTerm) {
         // Crypto short-term markets expire today by design — bypass expiry filter entirely
         confThreshold = 67; // use normal threshold
-        console.log(`  🪙 CRYPTO PASS: ${m.ticker} daysLeft=${daysLeft} (expiry bypass) confThreshold=${confThreshold}%`);
       } else {
         // Tiered expiry filter — getDynamicConfidenceThreshold returns null for SKIP
         const threshold = getDynamicConfidenceThreshold(daysLeft);
@@ -1313,6 +1312,9 @@ async function pollKalshi(): Promise<void> {
             }
           }
         }
+
+        // Log only crypto markets that survive all filters (volume + distance)
+        console.log(`  🪙 CRYPTO PASS: ${m.ticker} daysLeft=${daysLeft} confThreshold=${confThreshold}%`);
       }
 
       // Categorize for labeling (not filtering — let Claude decide)
