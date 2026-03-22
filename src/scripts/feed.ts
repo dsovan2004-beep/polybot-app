@@ -491,16 +491,17 @@ async function autoExecTrade(
       console.error(`  ⚠️  Trade save failed: ${tradeErr.message}`);
     }
 
-    // Mark signal as acted on
-    // (best-effort — don't crash if this fails)
-    await supabase
-      .from("signals")
-      .update({ acted_on: true })
-      .eq("market_id", marketId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .then(() => {})
-      .catch(() => {});
+    // Mark signal as acted on (best-effort — don't crash if this fails)
+    try {
+      await supabase
+        .from("signals")
+        .update({ acted_on: true })
+        .eq("market_id", marketId)
+        .order("created_at", { ascending: false })
+        .limit(1);
+    } catch {
+      // Silent — marking acted_on is non-critical
+    }
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
