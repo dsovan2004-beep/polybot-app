@@ -347,6 +347,20 @@ async function saveMarket(m: KalshiMarketFromAPI, yesPrice: number): Promise<str
 const CLAUDE_MODEL = "claude-sonnet-4-20250514";
 const MIN_CONFIDENCE = 67;
 const MIN_PRICE_GAP = 0.10;
+const MAX_EXPIRY_DAYS = 180; // Hard cap — never trade markets expiring beyond this
+
+/**
+ * Tiered confidence threshold based on days until market expiry.
+ * Short-term markets use normal threshold; longer-dated markets need more conviction.
+ * Returns null for markets that should be hard-skipped (same-day or >180 days).
+ */
+function getDynamicConfidenceThreshold(daysLeft: number): number | null {
+  if (daysLeft <= 0) return null;              // same-day — SKIP
+  if (daysLeft > MAX_EXPIRY_DAYS) return null; // >180 days — SKIP
+  if (daysLeft <= 30) return 67;               // 1-30 days: normal
+  if (daysLeft <= 90) return 72;               // 31-90 days: medium term
+  return 78;                                   // 91-180 days: high conviction
+}
 
 const SIGNAL_SYSTEM_PROMPT = `You are a prediction market analyst for PolyBot. Analyze this Kalshi market and output ONLY valid JSON:
 {
@@ -392,7 +406,8 @@ async function analyzeMarket(
   volume: number,
   expirationRaw: string,
   btcPrice: string,
-  memoryContext: string = ""
+  memoryContext: string = "",
+  confThreshold: number = MIN_CONFIDENCE
 ): Promise<void> {
   if (killSwitchActive || !anthropic) return;
   if (analyzedMarkets.has(kalshiTicker)) return;
@@ -409,7 +424,7 @@ async function analyzeMarket(
       if (!isNaN(expiryDate.getTime())) {
         const expiryStr = expiryDate.toISOString().split("T")[0];
         const daysLeft = Math.floor((expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-        expiryContext = `\nThis market expires on ${expiryStr}. Days until expiration: ${daysLeft}.`;
+        expiryContext = `\nThis market expires on ${expiryStr}. Days until expiration: ${daysLeft}. Required confidence threshold: ${confThreshold}% (higher for longer-dated markets).`;
       }
     }
 
@@ -471,7 +486,7 @@ What is your analysis?`;
     const priceGap = Math.abs(probability - yesPrice);
 
     const finalVote =
-      confidence < MIN_CONFIDENCE || priceGap < MIN_PRICE_GAP ? "NO_TRADE" : vote;
+      confidence < confThreshold || priceGap < MIN_PRICE_GAP ? "NO_TRADE" : vote;
 
     const validStrategies = ["news_lag", "sentiment_fade", "logical_arb", "maker", "unknown"];
     const strategy = validStrategies.includes(parsed.strategy) ? parsed.strategy : "unknown";
@@ -504,7 +519,7 @@ What is your analysis?`;
     );
 
     // Telegram alert for actionable signals
-    if (finalVote !== "NO_TRADE" && confidence >= MIN_CONFIDENCE && priceGap >= MIN_PRICE_GAP) {
+    if (finalVote !== "NO_TRADE" && confidence >= confThreshold && priceGap >= MIN_PRICE_GAP) {
       const alertMsg = [
         `*PolyBot Signal*`,
         ``,
@@ -683,38 +698,42 @@ async function pollKalshi(): Promise<void> {
     }
     console.log(`  📋 Status values: ${[...statusCounts.entries()].map(([k, v]) => `${k}=${v}`).join(", ")}`);
 
+    // --- Pre-sort: compute daysLeft for each market, then sort ascending ---
+    // This ensures short-term markets (highest edge) get analyzed first.
+    const marketsWithExpiry = allMarkets.map((m) => {
+      const expiryRaw = (m.close_time ?? m.expiration_time ?? m.end_date_iso ?? "") as string;
+      let daysLeft = 9999; // default if no expiry found
+      if (expiryRaw) {
+        const expiryDate = new Date(expiryRaw);
+        if (!isNaN(expiryDate.getTime())) {
+          daysLeft = Math.floor((expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+        }
+      }
+      return { m, daysLeft };
+    });
+    marketsWithExpiry.sort((a, b) => a.daysLeft - b.daysLeft);
+
     let processed = 0;
     let skippedStatus = 0;
     let skippedPrice = 0;
     let skippedSports = 0;
     let skippedVolume = 0;
     let skippedExpiry = 0;
-    let skippedHorizon = 0;
-    for (const m of allMarkets) {
+    for (const { m, daysLeft } of marketsWithExpiry) {
       // Accept both "open" and "active" as valid tradeable statuses
       if (m.status !== "open" && m.status !== "active") { skippedStatus++; continue; }
 
-      // Skip markets expiring today (0 days left — no time to trade)
-      const expiryCheckRaw = (m.close_time ?? m.expiration_time ?? m.end_date_iso ?? "") as string;
-      if (expiryCheckRaw) {
-        const expiryCheck = new Date(expiryCheckRaw);
-        if (!isNaN(expiryCheck.getTime())) {
-          const daysLeft = Math.floor((expiryCheck.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-          if (daysLeft <= 0) {
-            skippedExpiry++;
-            totalFiltered++;
-            continue;
-          }
+      // Tiered expiry filter — getDynamicConfidenceThreshold returns null for SKIP
+      const confThreshold = getDynamicConfidenceThreshold(daysLeft);
+      if (confThreshold === null) {
+        if (daysLeft > MAX_EXPIRY_DAYS) {
+          console.log(`  ⏰ SKIP: ${m.ticker} expires in ${daysLeft} days (>180 day cap)`);
         }
-      }
-
-      // Long-horizon title filter — skip speculative far-future markets
-      const titleLower = m.title.toLowerCase();
-      if (/before\s+20[3-9]\d|before\s+2100|before\s+2099/.test(titleLower)) {
-        skippedHorizon++;
+        skippedExpiry++;
         totalFiltered++;
         continue;
       }
+      console.log(`  📅 ${m.ticker} daysLeft=${daysLeft} confThreshold=${confThreshold}%`);
 
       // Price — use last_price_dollars (most reliable from events endpoint)
       // parseFloat ensures string values from API become real numbers
@@ -757,7 +776,7 @@ async function pollKalshi(): Promise<void> {
         `  📈 ${m.ticker} | ${(yesPrice * 100).toFixed(0)}c | vol:${vol24h} | [${category}] ${m.title.slice(0, 50)}`
       );
 
-      // Analyze with Claude
+      // Analyze with Claude (confThreshold from tiered expiry system)
       const expirationRaw = String(m.close_time ?? m.expiration_time ?? m.end_date_iso ?? "");
       await analyzeMarket(
         marketId,
@@ -768,11 +787,12 @@ async function pollKalshi(): Promise<void> {
         vol24h,
         expirationRaw,
         btcPrice,
-        memoryContext
+        memoryContext,
+        confThreshold
       );
     }
 
-    console.log(`  ✅ Processed ${processed} | skipped: status=${skippedStatus} expiry=${skippedExpiry} horizon=${skippedHorizon} price=${skippedPrice} volume=${skippedVolume} sports=${skippedSports}`);
+    console.log(`  ✅ Processed ${processed} | skipped: status=${skippedStatus} expiry=${skippedExpiry} price=${skippedPrice} volume=${skippedVolume} sports=${skippedSports}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ❌ Poll failed: ${msg}`);
