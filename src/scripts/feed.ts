@@ -1115,11 +1115,13 @@ async function pollKalshi(): Promise<void> {
       "/events?status=open&with_nested_markets=true&limit=200&series_ticker=KXBTC&sort_by=close_time&sort_direction=asc",
       "/events?status=open&with_nested_markets=true&limit=200&series_ticker=KXFED&sort_by=close_time&sort_direction=asc",
       "/events?status=open&with_nested_markets=true&limit=200&sort_by=close_time&sort_direction=asc",
-      // Crypto short-term markets (confirmed series tickers from Kalshi URLs)
-      "/events?status=open&with_nested_markets=true&limit=200&series_ticker=kxbtc15m",  // BTC 15-min up/down
-      "/events?status=open&with_nested_markets=true&limit=200&series_ticker=kxbtcd",    // BTC hourly above/below
-      "/events?status=open&with_nested_markets=true&limit=200&series_ticker=kxethd",    // ETH hourly
-      "/events?status=open&with_nested_markets=true&limit=200&series_ticker=kxsold",    // SOL hourly
+      // Crypto short-term markets — /markets endpoint with ticker prefix (lowercase + uppercase)
+      "/markets?status=open&limit=100&ticker=kxbtc15m",   // BTC 15-min up/down
+      "/markets?status=open&limit=100&ticker=kxbtcd",     // BTC hourly above/below
+      "/markets?status=open&limit=100&ticker=kxethd",     // ETH hourly
+      "/markets?status=open&limit=100&ticker=kxsold",     // SOL hourly
+      "/markets?status=open&limit=100&ticker=KXBTC15M",   // uppercase fallback
+      "/markets?status=open&limit=100&ticker=KXBTCD",     // uppercase fallback
     ];
 
     let allMarkets: KalshiMarketFromAPI[] = [];
