@@ -556,6 +556,11 @@ async function autoExecTrade(
 
     console.log(`  ✅ AUTO-EXEC: ${kalshiTicker} ${side.toUpperCase()} @ ${priceCents}c | order ${orderId}`);
 
+    // Telegram alert for trade execution
+    sendTelegramMessage(
+      `*🤖 Trade Executed*\n\nMarket: ${kalshiTicker}\nSide: ${side.toUpperCase()}\nPrice: ${priceCents}c\nSize: $${MAX_TRADE_DOLLARS}\nConfidence: ${confidence}%\nOrder: ${orderId}`
+    ).catch(() => {});
+
     // Save trade to Supabase
     // For crypto markets, ensure market exists first (may not have been saved via saveMarket)
     let tradeMarketId = marketId;
