@@ -1319,6 +1319,23 @@ async function pollKalshi(): Promise<void> {
 
       // Crypto proximity + volume filters — avoid high-risk trades near current price
       if (isCryptoShortTerm && cryptoPrices) {
+        // GUARD 1 — Time-of-day filter: no new crypto trades overnight (2am-9am ET / 11pm-6am PT)
+        const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+        const hourET = nowET.getHours();
+        const isOvernightET = hourET >= 2 && hourET < 9;
+        if (isOvernightET) {
+          console.log(`  💤 SKIP: ${m.ticker} overnight trading blocked (${hourET}am ET)`);
+          totalFiltered++;
+          continue;
+        }
+
+        // GUARD 2 — BTC trend guard: skip NO trades if BTC trending up strongly (>0.5% in 5min)
+        if (cryptoPrices.btcTrend5m > 0.5) {
+          console.log(`  📈 SKIP: ${m.ticker} BTC trending up strongly (+${cryptoPrices.btcTrend5m.toFixed(2)}%) — risky for NO`);
+          totalFiltered++;
+          continue;
+        }
+
         // Higher volume floor for crypto (1000 vs 100 general)
         if (vol24h < 1000) {
           totalFiltered++;
