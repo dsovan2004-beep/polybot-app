@@ -1528,7 +1528,7 @@ async function pollKalshi(): Promise<void> {
           totalFiltered++;
           continue;
         }
-        if (cryptoPrices.btcChange24h > 3.0) {
+        if (cryptoPrices.btcChange24h > 5.0) {
           console.log(`  📈 SKIP: ${m.ticker} BTC 24h bull run +${cryptoPrices.btcChange24h.toFixed(1)}% — risky for NO`);
           totalFiltered++;
           continue;
