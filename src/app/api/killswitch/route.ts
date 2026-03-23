@@ -41,20 +41,35 @@ export async function GET() {
 }
 
 // ---------------------------------------------------------------------------
-// POST — activate kill switch (sets kill_switch=true for today)
+// POST — toggle kill switch on/off
+// Body: { "active": true/false } or { "kill": true/false }
+// No body = activate (backward compatible)
 // ---------------------------------------------------------------------------
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
     const today = new Date().toISOString().slice(0, 10);
 
-    // Upsert today's performance row with kill_switch = true (service role bypasses RLS)
+    // Parse request body to determine desired state
+    let activate = true; // default: activate kill switch (backward compatible)
+    try {
+      const body = await request.json();
+      if (typeof body.active === "boolean") {
+        activate = body.active;
+      } else if (typeof body.kill === "boolean") {
+        activate = body.kill;
+      }
+    } catch {
+      // No body or invalid JSON — default to activate (backward compatible)
+    }
+
+    // Upsert today's performance row (service role bypasses RLS)
     const { error } = await getServiceSupabase()
       .from("performance")
       .upsert(
         {
           date: today,
-          kill_switch: true,
+          kill_switch: activate,
           trades_count: 0,
           wins: 0,
           losses: 0,
@@ -69,7 +84,8 @@ export async function POST() {
       );
     }
 
-    return Response.json({ ok: true, data: { status: "killed" } });
+    const status = activate ? "killed" : "active";
+    return Response.json({ ok: true, data: { active: activate, status } });
   } catch (err) {
     return Response.json(
       { ok: false, error: err instanceof Error ? err.message : "Unknown error" },
