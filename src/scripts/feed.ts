@@ -1137,8 +1137,9 @@ async function buildMemoryContext(): Promise<string> {
 // ---------------------------------------------------------------------------
 interface CryptoPrices {
   btc: number; eth: number; sol: number; xrp: number;
-  btcTrend5m: number;  // percent change over last 5 minutes
-  btcTrend1h: number;  // percent change over last 1 hour
+  btcTrend5m: number;   // percent change over last 5 minutes
+  btcTrend15m: number;  // percent change over last 15 minutes
+  btcTrend1h: number;   // percent change over last 1 hour
   btcChange24h: number; // percent change over last 24 hours
 }
 
@@ -1200,6 +1201,33 @@ async function fetchLiveCryptoPrices(): Promise<CryptoPrices | null> {
       // Trend unavailable — continue with 0
     }
 
+    // Fetch BTC 15-min candles for medium trend (2 candles, 900s granularity)
+    let btcTrend15m = 0;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      try {
+        const res = await fetch(
+          "https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=900&limit=2",
+          { signal: controller.signal }
+        );
+        if (res.ok) {
+          const candles = (await res.json()) as number[][];
+          if (candles.length >= 2) {
+            const currentClose = candles[0][4];
+            const prevClose = candles[1][4];
+            if (prevClose > 0) {
+              btcTrend15m = ((currentClose - prevClose) / prevClose) * 100;
+            }
+          }
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      // 15m trend unavailable — continue with 0
+    }
+
     // Fetch BTC 1-hour candles for hourly trend (2 candles, 3600s granularity)
     let btcTrend1h = 0;
     try {
@@ -1256,14 +1284,15 @@ async function fetchLiveCryptoPrices(): Promise<CryptoPrices | null> {
 
     const prices: CryptoPrices = {
       btc: spots.BTC, eth: spots.ETH, sol: spots.SOL, xrp: spots.XRP,
-      btcTrend5m, btcTrend1h, btcChange24h,
+      btcTrend5m, btcTrend15m, btcTrend1h, btcChange24h,
     };
 
     const t5 = btcTrend5m >= 0 ? "+" : "";
+    const t15 = btcTrend15m >= 0 ? "+" : "";
     const t1h = btcTrend1h >= 0 ? "+" : "";
     const t24h = btcChange24h >= 0 ? "+" : "";
     console.log(
-      `  💰 Live prices: BTC=$${prices.btc.toLocaleString()} (${t5}${btcTrend5m.toFixed(2)}% 5m, ${t1h}${btcTrend1h.toFixed(2)}% 1h, ${t24h}${btcChange24h.toFixed(1)}% 24h) ` +
+      `  💰 Live prices: BTC=$${prices.btc.toLocaleString()} (${t5}${btcTrend5m.toFixed(2)}% 5m, ${t15}${btcTrend15m.toFixed(2)}% 15m, ${t1h}${btcTrend1h.toFixed(2)}% 1h, ${t24h}${btcChange24h.toFixed(1)}% 24h) ` +
       `ETH=$${prices.eth.toLocaleString()} SOL=$${prices.sol.toFixed(0)} XRP=$${prices.xrp.toFixed(2)}`
     );
     return prices;
@@ -1483,9 +1512,14 @@ async function pollKalshi(): Promise<void> {
           continue;
         }
 
-        // GUARD 2 — 3-signal pump detector: skip if ANY signal fires
+        // GUARD 2 — 4-signal pump detector: skip if ANY signal fires
         if (cryptoPrices.btcTrend5m > 0.5) {
           console.log(`  📈 SKIP: ${m.ticker} BTC 5m pump +${cryptoPrices.btcTrend5m.toFixed(2)}% — risky for NO`);
+          totalFiltered++;
+          continue;
+        }
+        if (cryptoPrices.btcTrend15m > 0.8) {
+          console.log(`  📈 SKIP: ${m.ticker} BTC 15m pump +${cryptoPrices.btcTrend15m.toFixed(2)}% — risky for NO`);
           totalFiltered++;
           continue;
         }
