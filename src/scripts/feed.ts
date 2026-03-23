@@ -450,13 +450,20 @@ async function autoExecTrade(
       return;
     }
 
-    // Safety Check 1 — Max positions cap
+    // Safety Check 1 — Max positions cap (live from Kalshi, filter by actual exposure)
     try {
-      const posData = await kalshiFetch<{ market_positions: unknown[] }>(
+      const posData = await kalshiFetch<{
+        market_positions: { market_exposure_dollars?: string }[];
+      }>(
         "GET",
         "/portfolio/positions?settlement_status=unsettled"
       );
-      const posCount = (posData.market_positions ?? []).length;
+      const allPositions = posData.market_positions ?? [];
+      // Only count positions with real exposure (>$0) — settled ones have $0
+      const posCount = allPositions.filter(
+        (p) => parseFloat(String(p.market_exposure_dollars ?? "0")) > 0
+      ).length;
+      console.log(`  📊 Kalshi positions: ${posCount} open (${allPositions.length} total unsettled)`);
       if (posCount >= MAX_POSITIONS) {
         console.log(`  🚫 SKIP AUTO-EXEC: max positions reached (${posCount}/${MAX_POSITIONS})`);
         return;
