@@ -1574,6 +1574,11 @@ async function pollKalshi(): Promise<void> {
         `  📈 ${m.ticker} | ${(yesPrice * 100).toFixed(0)}c | vol:${vol24h} | [${category}] ${m.title.slice(0, 50)}`
       );
 
+      // CRYPTO-ONLY: skip Claude analysis for non-crypto markets (saves ~20+ API calls/cycle)
+      if (!isCryptoShortTerm) {
+        continue;
+      }
+
       // Analyze with Claude (confThreshold from tiered expiry system)
       const expirationRaw = String(m.close_time ?? m.expiration_time ?? m.end_date_iso ?? "");
       await analyzeMarket(
