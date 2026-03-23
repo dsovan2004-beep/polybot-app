@@ -4,9 +4,18 @@
 - Kalshi API docs: trading-api.readme.io/reference
 - Kalshi markets endpoint: GET /markets?series_ticker=KXBTCD&status=open&limit=200
 - Kalshi events endpoint: GET /events?status=open&with_nested_markets=true&limit=200
+- Kalshi positions: GET /portfolio/positions?settlement_status=unsettled
+- Kalshi balance: GET /portfolio/balance
 - Coinbase price API: api.coinbase.com/v2/prices/BTC-USD/spot (free, no key)
 - Claude API: docs.anthropic.com/en/docs
 - Supabase: supabase.com/docs
+
+## PolyBot API Endpoints (polybot-app.pages.dev)
+- GET /api/balance — live balance + positions from Kalshi
+- GET /api/killswitch — check kill switch status
+- POST /api/killswitch — toggle kill switch (body: {"active": true/false})
+- GET /api/markets — recent signals from Supabase
+- POST /api/trade — manual trade execution
 
 ## Crypto Series (Kalshi)
 - KXBTCD — BTC hourly above/below
