@@ -1341,6 +1341,15 @@ async function pollKalshi(): Promise<void> {
               totalFiltered++;
               continue;
             }
+
+            // Direction filter — only trade NO on thresholds ABOVE current price
+            // Threshold ABOVE price → betting price won't jump up → safe NO ✅
+            // Threshold BELOW price → betting price drops → wrong direction ❌
+            if (threshold < coinPrice) {
+              console.log(`  ⬇️ SKIP: ${m.ticker} threshold $${threshold.toFixed(0)} below current price $${coinPrice.toFixed(0)} — wrong direction`);
+              totalFiltered++;
+              continue;
+            }
           }
         }
 
@@ -1353,18 +1362,6 @@ async function pollKalshi(): Promise<void> {
           console.log(`  💰 SKIP: ${m.ticker} YES price ${yesCents}c outside 10c-50c sweet spot`);
           totalFiltered++;
           continue;
-        }
-
-        // Direction filter — only trade NO on thresholds ABOVE current price
-        // Threshold ABOVE price → betting price won't jump up → safe NO ✅
-        // Threshold BELOW price → betting price drops → wrong direction ❌
-        if (coinPrice > 0 && thresholdMatch) {
-          const threshold = parseFloat(thresholdMatch[1]);
-          if (threshold < coinPrice) {
-            console.log(`  ⬇️ SKIP: ${m.ticker} threshold $${threshold.toFixed(0)} below current price $${coinPrice.toFixed(0)} — wrong direction`);
-            totalFiltered++;
-            continue;
-          }
         }
 
         // Log only crypto markets that survive all filters (volume + distance + price + direction)
