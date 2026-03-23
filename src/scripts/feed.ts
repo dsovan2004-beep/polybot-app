@@ -1137,7 +1137,9 @@ async function buildMemoryContext(): Promise<string> {
 // ---------------------------------------------------------------------------
 interface CryptoPrices {
   btc: number; eth: number; sol: number; xrp: number;
-  btcTrend5m: number; // percent change over last 5 minutes
+  btcTrend5m: number;  // percent change over last 5 minutes
+  btcTrend1h: number;  // percent change over last 1 hour
+  btcChange24h: number; // percent change over last 24 hours
 }
 
 async function fetchLiveCryptoPrices(): Promise<CryptoPrices | null> {
@@ -1198,14 +1200,70 @@ async function fetchLiveCryptoPrices(): Promise<CryptoPrices | null> {
       // Trend unavailable — continue with 0
     }
 
+    // Fetch BTC 1-hour candles for hourly trend (2 candles, 3600s granularity)
+    let btcTrend1h = 0;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      try {
+        const res = await fetch(
+          "https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=3600&limit=2",
+          { signal: controller.signal }
+        );
+        if (res.ok) {
+          const candles = (await res.json()) as number[][];
+          if (candles.length >= 2) {
+            const currentClose = candles[0][4];
+            const prevClose = candles[1][4];
+            if (prevClose > 0) {
+              btcTrend1h = ((currentClose - prevClose) / prevClose) * 100;
+            }
+          }
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      // 1h trend unavailable — continue with 0
+    }
+
+    // Fetch BTC daily candles for 24h change (2 candles, 86400s granularity)
+    let btcChange24h = 0;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      try {
+        const res = await fetch(
+          "https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=86400&limit=2",
+          { signal: controller.signal }
+        );
+        if (res.ok) {
+          const candles = (await res.json()) as number[][];
+          if (candles.length >= 2) {
+            const currentClose = candles[0][4];
+            const prevClose = candles[1][4];
+            if (prevClose > 0) {
+              btcChange24h = ((currentClose - prevClose) / prevClose) * 100;
+            }
+          }
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      // 24h change unavailable — continue with 0
+    }
+
     const prices: CryptoPrices = {
       btc: spots.BTC, eth: spots.ETH, sol: spots.SOL, xrp: spots.XRP,
-      btcTrend5m,
+      btcTrend5m, btcTrend1h, btcChange24h,
     };
 
-    const trendSign = btcTrend5m >= 0 ? "+" : "";
+    const t5 = btcTrend5m >= 0 ? "+" : "";
+    const t1h = btcTrend1h >= 0 ? "+" : "";
+    const t24h = btcChange24h >= 0 ? "+" : "";
     console.log(
-      `  💰 Live prices: BTC=$${prices.btc.toLocaleString()} (${trendSign}${btcTrend5m.toFixed(2)}% 5m) ` +
+      `  💰 Live prices: BTC=$${prices.btc.toLocaleString()} (${t5}${btcTrend5m.toFixed(2)}% 5m, ${t1h}${btcTrend1h.toFixed(2)}% 1h, ${t24h}${btcChange24h.toFixed(1)}% 24h) ` +
       `ETH=$${prices.eth.toLocaleString()} SOL=$${prices.sol.toFixed(0)} XRP=$${prices.xrp.toFixed(2)}`
     );
     return prices;
@@ -1415,19 +1473,29 @@ async function pollKalshi(): Promise<void> {
 
       // Crypto proximity + volume filters — avoid high-risk trades near current price
       if (isCryptoShortTerm && cryptoPrices) {
-        // GUARD 1 — Time-of-day filter: no new crypto trades overnight (2am-9am ET / 11pm-6am PT)
+        // GUARD 1 — Time-of-day filter: no new crypto trades deep overnight (2am-6am ET / 11pm-3am PT)
         const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
         const hourET = nowET.getHours();
-        const isOvernightET = hourET >= 2 && hourET < 9;
+        const isOvernightET = hourET >= 2 && hourET < 6;
         if (isOvernightET) {
           console.log(`  💤 SKIP: ${m.ticker} overnight trading blocked (${hourET}am ET)`);
           totalFiltered++;
           continue;
         }
 
-        // GUARD 2 — BTC trend guard: skip NO trades if BTC trending up strongly (>0.5% in 5min)
+        // GUARD 2 — 3-signal pump detector: skip if ANY signal fires
         if (cryptoPrices.btcTrend5m > 0.5) {
-          console.log(`  📈 SKIP: ${m.ticker} BTC trending up strongly (+${cryptoPrices.btcTrend5m.toFixed(2)}%) — risky for NO`);
+          console.log(`  📈 SKIP: ${m.ticker} BTC 5m pump +${cryptoPrices.btcTrend5m.toFixed(2)}% — risky for NO`);
+          totalFiltered++;
+          continue;
+        }
+        if (cryptoPrices.btcTrend1h > 1.5) {
+          console.log(`  📈 SKIP: ${m.ticker} BTC 1h pump +${cryptoPrices.btcTrend1h.toFixed(2)}% — risky for NO`);
+          totalFiltered++;
+          continue;
+        }
+        if (cryptoPrices.btcChange24h > 3.0) {
+          console.log(`  📈 SKIP: ${m.ticker} BTC 24h bull run +${cryptoPrices.btcChange24h.toFixed(1)}% — risky for NO`);
           totalFiltered++;
           continue;
         }
