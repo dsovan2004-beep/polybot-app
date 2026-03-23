@@ -429,7 +429,8 @@ async function autoExecTrade(
   strategy: string,
   confidence: number,
   yesPrice: number,
-  isCrypto: boolean = false
+  isCrypto: boolean = false,
+  cryptoPrices: CryptoPrices | null = null
 ): Promise<void> {
   try {
     // Paper mode gate
@@ -589,6 +590,28 @@ async function autoExecTrade(
       }
     }
 
+    // Derive trade context for memory system
+    const tickerLow = kalshiTicker.toLowerCase();
+    let tradeCoin = "OTHER";
+    let tradeCoinPrice = 0;
+    if (tickerLow.startsWith("kxbtcd") || tickerLow.startsWith("kxbtc15m")) {
+      tradeCoin = "BTC";
+      tradeCoinPrice = cryptoPrices?.btc ?? 0;
+    } else if (tickerLow.startsWith("kxethd")) {
+      tradeCoin = "ETH";
+      tradeCoinPrice = cryptoPrices?.eth ?? 0;
+    } else if (tickerLow.startsWith("kxsold")) {
+      tradeCoin = "SOL";
+      tradeCoinPrice = cryptoPrices?.sol ?? 0;
+    }
+    const threshMatch = kalshiTicker.match(/-T([\d.]+)$/);
+    const tradeThreshold = threshMatch ? parseFloat(threshMatch[1]) : 0;
+    const tradeDistance = tradeCoinPrice > 0 && tradeThreshold > 0
+      ? Math.abs(tradeThreshold - tradeCoinPrice)
+      : null;
+    const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+    const hourET = nowET.getHours();
+
     const { error: tradeErr } = await supabase.from("trades").insert({
       market_id: tradeMarketId,
       direction: side,
@@ -598,6 +621,10 @@ async function autoExecTrade(
       strategy: strategy ?? "unknown",
       status: "open",
       notes: `AUTO-EXEC: ${orderId} | ${kalshiTicker} | conf:${confidence}%`,
+      hour_et: hourET,
+      btc_trend_at_entry: cryptoPrices?.btcTrend5m ?? null,
+      coin: tradeCoin,
+      threshold_distance: tradeDistance,
     });
     if (tradeErr) {
       console.error(`  ❌ TRADE SAVE FAILED: ${kalshiTicker} ${tradeErr.message}`);
@@ -773,6 +800,7 @@ async function checkAndSellPositions(): Promise<void> {
               pnl_pct: pnlPct,
               exit_at: new Date().toISOString(),
               notes: `${sellReason.toUpperCase()}: ${orderId} | ${gainSign}${gainPct.toFixed(1)}%`,
+              outcome: pnl > 0 ? "win" : "loss",
             })
             .eq("id", tradeRow.id);
         } catch {
@@ -939,7 +967,7 @@ What is your analysis?`;
     if (finalVote !== "NO_TRADE" && confidence >= confThreshold && priceGap >= MIN_PRICE_GAP) {
       // Auto-execute the trade
       const side: "yes" | "no" = finalVote === "YES" ? "yes" : "no";
-      await autoExecTrade(kalshiTicker, side, marketId, strategy, confidence, yesPrice, isCrypto);
+      await autoExecTrade(kalshiTicker, side, marketId, strategy, confidence, yesPrice, isCrypto, cryptoPrices);
 
       const modeTag = PAPER_MODE ? "📝 PAPER" : "🤖 AUTO-EXECUTED";
       const alertMsg = [
@@ -976,9 +1004,12 @@ async function buildMemoryContext(): Promise<string> {
         "/portfolio/positions?settlement_status=unsettled&limit=20"
       );
       const positions = posData.market_positions ?? [];
-      if (positions.length > 0) {
+      const openPos = positions.filter(
+        (p) => parseFloat(String(p.market_exposure_dollars ?? "0")) > 0
+      );
+      if (openPos.length > 0) {
         lines.push("YOUR OPEN POSITIONS (do NOT re-enter these markets):");
-        for (const p of positions.slice(0, 5)) {
+        for (const p of openPos.slice(0, 5)) {
           const side = parseFloat(String(p.position_fp)) < 0 ? "NO" : "YES";
           const exposure = parseFloat(String(p.market_exposure_dollars ?? "0")).toFixed(2);
           lines.push(`- ${side} on ${p.ticker} — $${exposure} exposure`);
@@ -988,51 +1019,116 @@ async function buildMemoryContext(): Promise<string> {
       console.log(`  ⚠️  Memory: positions fetch failed (continuing): ${posErr instanceof Error ? posErr.message : String(posErr)}`);
     }
 
-    // Layer 2 — Recent losses from Supabase trades
+    // Layer 2 — Pattern analysis from closed trades
     try {
-      const { data: losses } = await supabase
+      const { data: closedTrades } = await supabase
         .from("trades")
-        .select("market_title, strategy, confidence, pnl")
-        .lt("pnl", 0)
+        .select("coin, hour_et, btc_trend_at_entry, outcome, pnl, notes, created_at")
+        .not("outcome", "is", null)
         .order("created_at", { ascending: false })
-        .limit(5);
-      if (losses && losses.length > 0) {
-        if (lines.length > 0) lines.push("");
-        lines.push("RECENT LOSSES (be more cautious on similar markets):");
-        for (const t of losses) {
-          const title = (t.market_title ?? "unknown").slice(0, 50);
-          lines.push(`- Lost $${Math.abs(t.pnl).toFixed(2)} on "${title}", strategy: ${t.strategy ?? "unknown"}, conf: ${t.confidence ?? "?"}%`);
-        }
-      }
-    } catch {
-      // Silent — no trades table or no losses is fine
-    }
+        .limit(50);
 
-    // Layer 3 — Winning patterns from Supabase trades
-    try {
-      const { data: wins } = await supabase
-        .from("trades")
-        .select("market_title, strategy, confidence, pnl")
-        .gt("pnl", 0)
-        .order("created_at", { ascending: false })
-        .limit(5);
-      if (wins && wins.length > 0) {
-        if (lines.length > 0) lines.push("");
-        lines.push("WINNING PATTERNS (prioritize similar setups):");
-        for (const t of wins) {
-          const title = (t.market_title ?? "unknown").slice(0, 50);
-          lines.push(`- Won $${t.pnl.toFixed(2)} on "${title}", strategy: ${t.strategy ?? "unknown"}, conf: ${t.confidence ?? "?"}%`);
+      if (closedTrades && closedTrades.length >= 3) {
+        const wins = closedTrades.filter((t) => t.outcome === "win");
+        const losses = closedTrades.filter((t) => t.outcome === "loss");
+        const total = closedTrades.length;
+        const winRate = total > 0 ? Math.round((wins.length / total) * 100) : 0;
+        lines.push("");
+        lines.push(`TRADE PATTERNS: ${total} closed | ${wins.length}W ${losses.length}L | ${winRate}% win rate`);
+
+        // By coin
+        const coins = ["BTC", "ETH", "SOL"];
+        const coinStats: string[] = [];
+        for (const c of coins) {
+          const coinTrades = closedTrades.filter((t) => t.coin === c);
+          if (coinTrades.length === 0) continue;
+          const coinWins = coinTrades.filter((t) => t.outcome === "win").length;
+          const coinWr = Math.round((coinWins / coinTrades.length) * 100);
+          const edge = coinWr >= 75 ? "strong" : coinWr >= 50 ? "moderate" : "weak";
+          coinStats.push(`${c}: ${coinTrades.length} trades, ${coinWins}W (${coinWr}%) — ${edge}`);
         }
+        if (coinStats.length > 0) {
+          lines.push("BY COIN: " + coinStats.join(" | "));
+        }
+
+        // By time window (ET)
+        const timeWindows = [
+          { label: "9am-5pm", min: 9, max: 17 },
+          { label: "5pm-11pm", min: 17, max: 23 },
+          { label: "11pm-9am", min: 23, max: 9, overnight: true },
+        ];
+        const timeStats: string[] = [];
+        for (const tw of timeWindows) {
+          const twTrades = closedTrades.filter((t) => {
+            if (t.hour_et == null) return false;
+            if (tw.overnight) return t.hour_et >= 23 || t.hour_et < 9;
+            return t.hour_et >= tw.min && t.hour_et < tw.max;
+          });
+          if (twTrades.length === 0) continue;
+          const twWins = twTrades.filter((t) => t.outcome === "win").length;
+          const twWr = Math.round((twWins / twTrades.length) * 100);
+          const tag = twWr >= 75 ? "BEST" : twWr >= 50 ? "OK" : "AVOID";
+          timeStats.push(`${tw.label}: ${twWins}/${twTrades.length} (${twWr}%) ${tag}`);
+        }
+        if (timeStats.length > 0) {
+          lines.push("BY TIME (ET): " + timeStats.join(" | "));
+        }
+
+        // By BTC trend at entry
+        const flatTrades = closedTrades.filter((t) => t.btc_trend_at_entry != null && Math.abs(t.btc_trend_at_entry) < 0.1);
+        const risingTrades = closedTrades.filter((t) => t.btc_trend_at_entry != null && t.btc_trend_at_entry >= 0.5);
+        const trendStats: string[] = [];
+        if (flatTrades.length > 0) {
+          const fWins = flatTrades.filter((t) => t.outcome === "win").length;
+          trendStats.push(`Flat(<0.1%): ${fWins}/${flatTrades.length}W (${Math.round((fWins / flatTrades.length) * 100)}%)`);
+        }
+        if (risingTrades.length > 0) {
+          const rWins = risingTrades.filter((t) => t.outcome === "win").length;
+          trendStats.push(`Rising(>0.5%): ${rWins}/${risingTrades.length}W (${Math.round((rWins / risingTrades.length) * 100)}%)`);
+        }
+        if (trendStats.length > 0) {
+          lines.push("BY BTC TREND: " + trendStats.join(" | "));
+        }
+
+        // Recent losses (last 3)
+        const recentLosses = losses.slice(0, 3);
+        if (recentLosses.length > 0) {
+          lines.push("RECENT LOSSES:");
+          for (const l of recentLosses) {
+            const coin = l.coin ?? "?";
+            const hour = l.hour_et != null ? `${l.hour_et}h ET` : "?";
+            const trend = l.btc_trend_at_entry != null ? `BTC ${l.btc_trend_at_entry >= 0 ? "+" : ""}${l.btc_trend_at_entry.toFixed(2)}%` : "";
+            const loss = l.pnl != null ? `$${Math.abs(l.pnl).toFixed(2)}` : "?";
+            lines.push(`- ${coin} lost ${loss} at ${hour} ${trend}`);
+          }
+        }
+      } else {
+        // Fallback: simple wins/losses if not enough closed trades with outcome
+        try {
+          const { data: losses } = await supabase
+            .from("trades")
+            .select("notes, pnl")
+            .lt("pnl", 0)
+            .order("created_at", { ascending: false })
+            .limit(3);
+          if (losses && losses.length > 0) {
+            lines.push("");
+            lines.push("RECENT LOSSES:");
+            for (const t of losses) {
+              lines.push(`- Lost $${Math.abs(t.pnl).toFixed(2)} | ${(t.notes ?? "").slice(0, 60)}`);
+            }
+          }
+        } catch { /* silent */ }
       }
     } catch {
-      // Silent — no wins is fine
+      // Silent — pattern analysis is non-critical
     }
   } catch {
     // Total failure — return empty, don't break the feed
   }
 
   if (lines.length === 0) return "";
-  return `\n--- PORTFOLIO MEMORY (do NOT ignore) ---\n${lines.join("\n")}\n--- END PORTFOLIO MEMORY ---\n`;
+  return `\n--- TRADE MEMORY (do NOT ignore) ---\n${lines.join("\n")}\n--- END TRADE MEMORY ---\n`;
 }
 
 // ---------------------------------------------------------------------------
