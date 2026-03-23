@@ -1355,7 +1355,19 @@ async function pollKalshi(): Promise<void> {
           continue;
         }
 
-        // Log only crypto markets that survive all filters (volume + distance + price)
+        // Direction filter — only trade NO on thresholds ABOVE current price
+        // Threshold ABOVE price → betting price won't jump up → safe NO ✅
+        // Threshold BELOW price → betting price drops → wrong direction ❌
+        if (coinPrice > 0 && thresholdMatch) {
+          const threshold = parseFloat(thresholdMatch[1]);
+          if (threshold < coinPrice) {
+            console.log(`  ⬇️ SKIP: ${m.ticker} threshold $${threshold.toFixed(0)} below current price $${coinPrice.toFixed(0)} — wrong direction`);
+            totalFiltered++;
+            continue;
+          }
+        }
+
+        // Log only crypto markets that survive all filters (volume + distance + price + direction)
         console.log(`  🪙 CRYPTO PASS: ${m.ticker} daysLeft=${daysLeft} confThreshold=${confThreshold}% YES=${yesCents}c`);
       }
 
