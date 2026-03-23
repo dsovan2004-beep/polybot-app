@@ -224,14 +224,71 @@ Polymarket → Kalshi ticker mismatch was causing all EXEC failures. Instead of 
 
 ---
 
-## Sprint 9: Dashboard Intelligence — IN PROGRESS 🔄
-**Goal:** Trade visibility, strategy analytics, confidence-based sizing
+## Sprint 9: Crypto-Only Pivot + Safety — COMPLETE ✅
+**Dates:** Mar 22–23
+**Goal:** Crypto-only pivot, safety filters, smart memory, pump detection, API cost reduction
 
 | # | Task | Status |
 |---|------|--------|
-| 8 | Fix #8: Trades log dashboard tab — full trade history with P&L per trade | ⬜ NOT STARTED |
-| 9 | Fix #9: Win rate by strategy — breakdown showing which strategies perform best | ⬜ NOT STARTED |
-| 10 | Fix #10: Position sizing by confidence — scale trade size based on confidence level | ⬜ NOT STARTED |
+| 11 | Volume filter 500→100 | ✅ COMPLETE |
+| 12 | Live Coinbase prices injected into Claude prompt | ✅ COMPLETE |
+| 13-16 | Crypto market discovery (correct endpoint: /markets?series_ticker=) | ✅ COMPLETE |
+| 17 | Min proximity filter (BTC $250, ETH $20, SOL $2) | ✅ COMPLETE |
+| 18 | Max distance filter (BTC $3000, ETH $150, SOL $10) | ✅ COMPLETE |
+| 19 | Clean CRYPTO PASS logs (moved after distance filter) | ✅ COMPLETE |
+| 20 | Supabase trade tracking for crypto markets (isCrypto flag) | ✅ COMPLETE |
+| 21 | BTC min distance lowered $500→$250 | ✅ COMPLETE |
+| 22 | Dashboard balance uses totalPortfolioValue (cash + positions) | ✅ COMPLETE |
+| 23 | Dashboard hides zero-exposure settled positions | ✅ COMPLETE |
+| 24 | YES price sweet spot filter 10c-50c for crypto | ✅ COMPLETE |
+| 25 | Direction filter — block NO trades where threshold < current price | ✅ COMPLETE |
+| 26 | Open position count from Kalshi API (not stale Supabase data) | ✅ COMPLETE |
+| 27 | Telegram trade execution alerts | ✅ COMPLETE |
+| 28 | Overnight block (2am-6am ET) + BTC 5m trend guard | ✅ COMPLETE |
+| 29 | Smart memory — Claude learns win/loss patterns by coin, time, trend | ✅ COMPLETE |
+| 30 | Smart pump detector — 3-signal (5m/1h/24h) replaces single trend guard | ✅ COMPLETE |
+| 31 | Skip Claude on non-crypto markets — saves ~20+ API calls/cycle | ✅ COMPLETE |
+| 32 | 4th pump signal — btcTrend15m > 0.8% (steady 15-min climb) | ✅ COMPLETE |
+| KS | Kill switch API toggle fix (was hardcoded to always activate) | ✅ COMPLETE |
+
+**Key Milestones — Sprint 9:**
+- Crypto-only pivot: KXBTCD, KXBTC15M, KXETHD, KXSOLD only
+- 7-layer filter pipeline: overnight → pump detector (4 signals) → volume → distance → direction → YES price → Claude
+- Smart memory system: 5 new Supabase columns, pattern analysis by coin/time/trend
+- API cost reduced from ~$2.50/day to ~$0.20-0.30/day (Fix #31)
+- 4-signal pump detector: 5m >0.5%, 15m >0.8%, 1h >1.5%, 24h >3%
+
+**Performance Day 3 (March 23, 2026):**
+- 7 wins: 3pm BTC x3 ($71,200/$71,300/$71,400) + 11am BTC x4 ($71,800/$72,100/$72,200/$72,400)
+- 2 ETH losses (overnight pump): $2,090 + $2,130
+- 1 open: BTC Friday $70,900 (expires Mar 27 5pm ET)
+- Current balance: $21.65 | Cash: $21.19
+- Estimated win rate: ~65-70% overall
+
+**API Key Fix:**
+- Switched from polybot-2 key (defendml workspace, exhausted) to new key in Default workspace
+- Root cause: credits added to Default workspace but polybot-2 was in defendml workspace
+
+**Files modified:**
+- src/scripts/feed.ts (all fixes)
+- src/app/api/killswitch/route.ts (toggle fix)
+- src/app/api/balance/route.ts (portfolio value fix)
+- src/app/bot/page.tsx (dashboard fixes #22-#23)
+- CLAUDE.md, README.md, docs/RESOURCES.md (documentation)
+- Supabase: 5 new columns on trades table (hour_et, btc_trend_at_entry, coin, threshold_distance, outcome)
+
+---
+
+## Sprint 10: Dashboard Intelligence + Cleanup — QUEUED 🔜
+**Goal:** Trade visibility, cleanup, more trading opportunities
+
+| # | Task | Status |
+|---|------|--------|
+| 33 | Orphaned positions cleanup (3 positions with no Supabase record spamming ⚠️ warnings) | ⬜ NOT STARTED |
+| 34 | Weekly BTC/ETH markets (more trading opportunities) | ⬜ NOT STARTED |
+| 8 | Trades log dashboard tab — full trade history with P&L per trade | ⬜ NOT STARTED |
+| 9 | Win rate by strategy — breakdown showing which strategies perform best | ⬜ NOT STARTED |
+| 10 | Position sizing by confidence — scale trade size based on confidence level | ⬜ NOT STARTED |
 
 **Future Backlog (unscheduled):**
 - Implement MACD(6/26/5) strategy on BTC 1-min candles
