@@ -705,7 +705,7 @@ async function checkAndSellPositions(): Promise<void> {
           .single();
 
         if (!tradeRow || !tradeRow.entry_cost) {
-          console.log(`  ⚠️  TAKE-PROFIT: ${ticker} — no open trade in Supabase, skipping`);
+          // Silent skip — orphaned position from before auto-exec tracking
           continue;
         }
 
