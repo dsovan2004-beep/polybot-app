@@ -96,9 +96,17 @@
 - **Performance Day 3:** Balance $25.25, overnight losses stopped, API cost cut 90%
 - Files modified: feed.ts, killswitch/route.ts, page.tsx, balance/route.ts
 
-## Phase 10 — Scale + Dashboard Intelligence: QUEUED 📋
-- Fix #33: Orphaned positions cleanup (positions in Kalshi but not in Supabase)
-- Fix #34: Weekly BTC/ETH markets (KXBTC-W series, longer expiry)
+## Phase 10 — Market Expansion + Cleanup: COMPLETE ✅
+- **Crypto universe expanded:** 4 series → 7 series (added KXXRPD, KXDOGED, KXBNBD)
+- **901 crypto markets** (up from 566, +59%)
+- **6 Coinbase price feeds:** BTC, ETH, SOL, XRP, DOGE, BNB
+- **24h pump threshold relaxed:** 3% → 5% (backward-looking signal was too sensitive)
+- **Orphaned position warnings silenced** (legacy pre-auto-exec positions)
+- **Dead endpoints removed:** KXBTCW/KXETHW don't exist (weekly uses KXBTCD/KXETHD)
+- **DOGE/BNB fail-open:** optional coins default to $0 if Coinbase unavailable
+- Files modified: feed.ts only
+
+## Phase 11 — Dashboard Intelligence: QUEUED 📋
 - Fix #8: Trades log dashboard tab (full trade history with P&L per trade)
 - Fix #9: Win rate by strategy (breakdown showing which strategies perform best)
 - Fix #10: Position sizing by confidence (scale trade size based on confidence level)
@@ -137,9 +145,9 @@
 | AI | ✅ Live | Claude Haiku (ANTHROPIC_API_KEY) — 20x cheaper |
 | Kalshi | ✅ Live | RSA-PSS signing, CFTC regulated exchange |
 | Telegram | ✅ Live | @Polybotsalerts_bot — signal + trade + kill alerts |
-| Data Feeds | ✅ Live | Kalshi REST polling every 30s, 1,851 markets (1,285 general + 566 crypto) |
-| Coinbase | ✅ Live | BTC/ETH/SOL/XRP spot + 4 BTC trend timeframes (5m/15m/1h/24h) |
+| Data Feeds | ✅ Live | Kalshi REST polling every 30s, ~2,016 markets (1,115 general + 901 crypto) |
+| Coinbase | ✅ Live | BTC/ETH/SOL/XRP/DOGE/BNB spot + 4 BTC trend timeframes (5m/15m/1h/24h) |
 | Feed | ✅ Running | Mac terminal (feed.ts with self-test + Telegram + pump detector) |
-| Signals | ✅ Flowing | Claude analyzing crypto-only markets with live prices |
+| Signals | ✅ Flowing | Claude analyzing 7 crypto series with live prices |
 | First Trade | ✅ Placed | March 20, 2026 4:24 PM PT |
-| Balance | ✅ Tracked | $25.25 (started $21.78, +16.4% Day 1) |
+| Balance | ✅ Tracked | $21.66 portfolio (started $21.78) |

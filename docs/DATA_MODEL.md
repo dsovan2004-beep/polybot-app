@@ -12,7 +12,7 @@ id UUID PRIMARY KEY, signal_id UUID REFERENCES signals(id), market_id UUID REFER
 ### Sprint 9 New Columns (added via ALTER TABLE)
 - **hour_et** INTEGER — hour of trade in Eastern Time (0–23), used for time-window pattern analysis
 - **btc_trend_at_entry** DECIMAL(8,4) — BTC 5-min trend % at time of trade entry
-- **coin** TEXT — which coin was traded (BTC, ETH, SOL, or OTHER)
+- **coin** TEXT — which coin was traded (BTC, ETH, SOL, XRP, DOGE, BNB, or OTHER)
 - **threshold_distance** DECIMAL(12,2) — dollar distance between Kalshi threshold and live coin price at entry
 - **outcome** TEXT — "win" or "loss", set on settlement by checkAndSellPositions()
 
@@ -44,26 +44,33 @@ Added 5 columns to trades table via ALTER TABLE for smart memory and trade learn
 - INSERT (autoExecTrade): now also writes hour_et, btc_trend_at_entry, coin, threshold_distance
 - UPDATE (checkAndSellPositions): now also writes outcome ("win" or "loss") on settlement
 - SELECT (buildMemoryContext): queries last 50 closed trades with outcome for pattern analysis
-  - Groups by coin → win rate per coin (BTC/ETH/SOL)
+  - Groups by coin → win rate per coin (BTC/ETH/SOL/XRP/DOGE/BNB)
   - Groups by hour_et → win rate by time window (9am-5pm / 5pm-11pm / 11pm-9am ET)
   - Groups by btc_trend_at_entry → win rate flat (≤0.3%) vs rising (>0.3%)
   - Recent 3 losses with coin, hour, trend for avoid-repeat learning
 - performance table: kill_switch column used by POST /api/killswitch toggle (keyed by date)
 
-## Feed Script Data Flow (feed.ts) — Sprint 9 Updated
-- Polls Kalshi REST API every 30 seconds: 3x GET /events + 4x GET /markets?series_ticker= (KXBTCD, KXBTC15M, KXETHD, KXSOLD)
-- Fetches 1,851 markets total (1,285 general + 566 crypto)
-- Fetches live Coinbase prices: BTC, ETH, SOL, XRP spot + 4 BTC trend timeframes (5m/15m/1h/24h via Coinbase Exchange candles)
+## Sprint 10 Usage Notes (No Schema Changes)
+No new tables or columns. Changes to feed.ts data flow only:
+- autoExecTrade() coin detection expanded: KXXRPD→"XRP", KXDOGED→"DOGE", KXBNBD→"BNB"
+- fetchLiveCryptoPrices() now fetches 6 coins (BTC, ETH, SOL, XRP + optional DOGE, BNB)
+- DOGE/BNB are fail-open: if Coinbase fetch fails, they default to 0 (required coins still must succeed)
+- Orphaned position warnings silenced (checkAndSellPositions no longer logs ⚠️ for missing Supabase records)
+
+## Feed Script Data Flow (feed.ts) — Sprint 10 Updated
+- Polls Kalshi REST API every 30 seconds: 3x GET /events + 7x GET /markets?series_ticker= (KXBTCD, KXBTC15M, KXETHD, KXSOLD, KXXRPD, KXDOGED, KXBNBD)
+- Fetches ~2,016 markets total (~1,115 general + ~901 crypto)
+- Fetches live Coinbase prices: BTC, ETH, SOL, XRP (required) + DOGE, BNB (optional, fail-open) + 4 BTC trend timeframes (5m/15m/1h/24h)
 - **Crypto-only hard block:** non-crypto markets never reach Claude (Fix #31)
 - **5-layer crypto filter pipeline:**
   1. Volume: crypto ≥ 1,000
-  2. Distance: BTC $250–$3,000, ETH $20–$150, SOL $2–$10 from current price
+  2. Distance: BTC $250–$3,000, ETH $20–$150, SOL $2–$10, XRP/DOGE $2–$10, BNB $20–$150 from current price
   3. YES price: 10c–50c sweet spot only
   4. Direction: threshold must be ABOVE current price
   5. Claude: 67% minimum confidence with live prices injected
 - **Safety guards (before filters):**
   - Overnight block: 2am–6am ET hard skip
-  - 4-signal pump detector: 5m >0.5%, 15m >0.8%, 1h >1.5%, 24h >3%
+  - 4-signal pump detector: 5m >0.5%, 15m >0.8%, 1h >1.5%, 24h >5%
 - Saves qualifying markets to markets table (upsert on polymarket_id = kalshi_ticker)
 - Claude analyzes crypto-only inline → saves signals to signals table
 - buildMemoryContext() queries Kalshi positions + last 50 closed trades for pattern learning

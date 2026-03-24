@@ -279,13 +279,43 @@ Polymarket → Kalshi ticker mismatch was causing all EXEC failures. Instead of 
 
 ---
 
-## Sprint 10: Dashboard Intelligence + Cleanup — QUEUED 🔜
-**Goal:** Trade visibility, cleanup, more trading opportunities
+## Sprint 10: Market Expansion + Cleanup — COMPLETE ✅
+**Dates:** Mar 24
+**Goal:** Expand crypto universe, tune pump detector, silence log spam
 
 | # | Task | Status |
 |---|------|--------|
-| 33 | Orphaned positions cleanup (3 positions with no Supabase record spamming ⚠️ warnings) | ⬜ NOT STARTED |
-| 34 | Weekly BTC/ETH markets (more trading opportunities) | ⬜ NOT STARTED |
+| 33 | Raise 24h pump threshold 3% → 5% (was blocking trades all day from yesterday's pump) | ✅ COMPLETE |
+| 34 | Silence orphaned position warnings (⚠️ spam every 30s for legacy positions) | ✅ COMPLETE |
+| 35 | Add XRP trading (KXXRPD) + remove dead KXBTCW/KXETHW endpoints | ✅ COMPLETE |
+| 36 | Add DOGE + BNB trading (KXDOGED, KXBNBD) with Coinbase price feeds | ✅ COMPLETE |
+
+**Key Milestones — Sprint 10:**
+- Crypto universe expanded: 4 series → 7 series (added XRP, DOGE, BNB)
+- Crypto markets: 566 → 901 (+59% more trading opportunities)
+- 24h pump threshold relaxed: 3% → 5% (5m/15m/1h signals already catch live pumps)
+- Orphaned position log spam eliminated (silent skip for pre-auto-exec positions)
+- Dead endpoints removed: KXBTCW/KXETHW don't exist (weekly BTC/ETH use KXBTCD/KXETHD series)
+- DOGE/BNB Coinbase prices fail-open (won't break if unavailable)
+- 6 live Coinbase price feeds: BTC, ETH, SOL, XRP, DOGE, BNB
+
+**Current System State (March 24, 2026):**
+- Balance: $17.96 cash | $21.66 portfolio
+- 5 open positions: BTC NO $71,800/$72,050/$72,300/$72,550 (today 5pm ET) + BTC NO $70,900 (Friday)
+- 10 API queries per cycle: 3 /events + 7 /markets?series_ticker=
+- 4-signal pump detector: 5m >0.5%, 15m >0.8%, 1h >1.5%, 24h >5%
+- API burn rate: ~$0.20-0.30/day
+
+**Files modified:**
+- src/scripts/feed.ts (all 4 fixes)
+
+---
+
+## Sprint 11: Dashboard Intelligence — QUEUED 🔜
+**Goal:** Trade visibility and strategy optimization
+
+| # | Task | Status |
+|---|------|--------|
 | 8 | Trades log dashboard tab — full trade history with P&L per trade | ⬜ NOT STARTED |
 | 9 | Win rate by strategy — breakdown showing which strategies perform best | ⬜ NOT STARTED |
 | 10 | Position sizing by confidence — scale trade size based on confidence level | ⬜ NOT STARTED |
