@@ -1068,109 +1068,186 @@ async function buildMemoryContext(): Promise<string> {
       console.log(`  ⚠️  Memory: positions fetch failed (continuing): ${posErr instanceof Error ? posErr.message : String(posErr)}`);
     }
 
-    // Layer 2 — Pattern analysis from closed trades
+    // Layer 2 — Pattern analysis from ALL Kalshi settled positions
+    // This pulls from Kalshi API directly, not just Supabase-tracked trades
+    let kalshiPatternsDone = false;
     try {
-      const { data: closedTrades } = await supabase
-        .from("trades")
-        .select("coin, hour_et, btc_trend_at_entry, outcome, pnl, notes, created_at")
-        .not("outcome", "is", null)
-        .order("created_at", { ascending: false })
-        .limit(50);
+      const settledData = await kalshiFetch<{
+        market_positions: {
+          ticker: string;
+          realized_pnl: string;
+          market_exposure_dollars: string;
+          position_fp: string;
+        }[];
+      }>("GET", "/portfolio/positions?settlement_status=settled&limit=200");
 
-      if (closedTrades && closedTrades.length >= 3) {
-        const wins = closedTrades.filter((t) => t.outcome === "win");
-        const losses = closedTrades.filter((t) => t.outcome === "loss");
-        const total = closedTrades.length;
+      const settled = settledData.market_positions ?? [];
+      if (settled.length >= 3) {
+        kalshiPatternsDone = true;
+
+        // Classify each settled trade
+        interface SettledTrade {
+          ticker: string;
+          coin: string;
+          pnl: number;
+          won: boolean;
+          threshold: number;
+          distance: number; // will be 0 if we can't determine
+        }
+
+        const trades: SettledTrade[] = [];
+        for (const s of settled) {
+          const pnl = parseFloat(String(s.realized_pnl ?? "0"));
+          const t = s.ticker.toLowerCase();
+
+          // Determine coin from ticker
+          let coin = "OTHER";
+          if (t.startsWith("kxbtcd") || t.startsWith("kxbtc15m") || t.startsWith("kxbtcw")) coin = "BTC";
+          else if (t.startsWith("kxethd") || t.startsWith("kxethw")) coin = "ETH";
+          else if (t.startsWith("kxsold")) coin = "SOL";
+          else if (t.startsWith("kxxrpd")) coin = "XRP";
+          else if (t.startsWith("kxdoged")) coin = "DOGE";
+          else if (t.startsWith("kxbnbd")) coin = "BNB";
+
+          // Parse threshold from ticker
+          const threshMatch = s.ticker.match(/-T([\d.]+)$/);
+          const threshold = threshMatch ? parseFloat(threshMatch[1]) : 0;
+
+          trades.push({
+            ticker: s.ticker,
+            coin,
+            pnl,
+            won: pnl > 0,
+            threshold,
+            distance: 0, // unknown at settlement time
+          });
+        }
+
+        // Filter to crypto trades only (skip politics/sports from early days)
+        const cryptoTrades = trades.filter((t) => t.coin !== "OTHER");
+        const allTrades = cryptoTrades.length >= 3 ? cryptoTrades : trades;
+
+        const wins = allTrades.filter((t) => t.won);
+        const losses = allTrades.filter((t) => !t.won);
+        const total = allTrades.length;
         const winRate = total > 0 ? Math.round((wins.length / total) * 100) : 0;
+        const totalPnl = allTrades.reduce((sum, t) => sum + t.pnl, 0);
+
         lines.push("");
-        lines.push(`TRADE PATTERNS: ${total} closed | ${wins.length}W ${losses.length}L | ${winRate}% win rate`);
+        lines.push(`TRADE HISTORY (Kalshi settlements): ${total} trades | ${wins.length}W ${losses.length}L | ${winRate}% win rate | P&L: $${totalPnl.toFixed(2)}`);
 
         // By coin
-        const coins = ["BTC", "ETH", "SOL"];
+        const coinList = ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB"];
         const coinStats: string[] = [];
-        for (const c of coins) {
-          const coinTrades = closedTrades.filter((t) => t.coin === c);
-          if (coinTrades.length === 0) continue;
-          const coinWins = coinTrades.filter((t) => t.outcome === "win").length;
-          const coinWr = Math.round((coinWins / coinTrades.length) * 100);
-          const edge = coinWr >= 75 ? "strong" : coinWr >= 50 ? "moderate" : "weak";
-          coinStats.push(`${c}: ${coinTrades.length} trades, ${coinWins}W (${coinWr}%) — ${edge}`);
+        for (const c of coinList) {
+          const ct = allTrades.filter((t) => t.coin === c);
+          if (ct.length === 0) continue;
+          const cw = ct.filter((t) => t.won).length;
+          const wr = Math.round((cw / ct.length) * 100);
+          const edge = wr >= 75 ? "strong edge" : wr >= 50 ? "moderate" : "WEAK — trade cautiously";
+          coinStats.push(`${c}: ${cw}/${ct.length} (${wr}%) ${edge}`);
         }
         if (coinStats.length > 0) {
           lines.push("BY COIN: " + coinStats.join(" | "));
         }
 
-        // By time window (ET)
-        const timeWindows = [
-          { label: "9am-5pm", min: 9, max: 17 },
-          { label: "5pm-11pm", min: 17, max: 23 },
-          { label: "11pm-9am", min: 23, max: 9, overnight: true },
-        ];
-        const timeStats: string[] = [];
-        for (const tw of timeWindows) {
-          const twTrades = closedTrades.filter((t) => {
-            if (t.hour_et == null) return false;
-            if (tw.overnight) return t.hour_et >= 23 || t.hour_et < 9;
-            return t.hour_et >= tw.min && t.hour_et < tw.max;
-          });
-          if (twTrades.length === 0) continue;
-          const twWins = twTrades.filter((t) => t.outcome === "win").length;
-          const twWr = Math.round((twWins / twTrades.length) * 100);
-          const tag = twWr >= 75 ? "BEST" : twWr >= 50 ? "OK" : "AVOID";
-          timeStats.push(`${tw.label}: ${twWins}/${twTrades.length} (${twWr}%) ${tag}`);
-        }
-        if (timeStats.length > 0) {
-          lines.push("BY TIME (ET): " + timeStats.join(" | "));
+        // By threshold distance for BTC trades
+        const btcTrades = allTrades.filter((t) => t.coin === "BTC" && t.threshold > 0);
+        if (btcTrades.length >= 3) {
+          const tightTrades = btcTrades.filter((t) => t.threshold > 0 && t.threshold < 70000); // rough proxy for "tight"
+          const wideTrades = btcTrades.filter((t) => t.threshold >= 72000); // rough proxy for "wide"
+          const distStats: string[] = [];
+          if (tightTrades.length > 0) {
+            const tw = tightTrades.filter((t) => t.won).length;
+            distStats.push(`Low threshold(<$70K): ${tw}/${tightTrades.length} (${Math.round((tw / tightTrades.length) * 100)}%)`);
+          }
+          if (wideTrades.length > 0) {
+            const ww = wideTrades.filter((t) => t.won).length;
+            distStats.push(`High threshold(>$72K): ${ww}/${wideTrades.length} (${Math.round((ww / wideTrades.length) * 100)}%)`);
+          }
+          if (distStats.length > 0) {
+            lines.push("BTC BY THRESHOLD: " + distStats.join(" | "));
+          }
         }
 
-        // By BTC trend at entry
-        const flatTrades = closedTrades.filter((t) => t.btc_trend_at_entry != null && Math.abs(t.btc_trend_at_entry) < 0.1);
-        const risingTrades = closedTrades.filter((t) => t.btc_trend_at_entry != null && t.btc_trend_at_entry >= 0.5);
-        const trendStats: string[] = [];
-        if (flatTrades.length > 0) {
-          const fWins = flatTrades.filter((t) => t.outcome === "win").length;
-          trendStats.push(`Flat(<0.1%): ${fWins}/${flatTrades.length}W (${Math.round((fWins / flatTrades.length) * 100)}%)`);
+        // Recent momentum — last 10 trades
+        const recent10 = allTrades.slice(0, 10);
+        if (recent10.length >= 5) {
+          const r10Wins = recent10.filter((t) => t.won).length;
+          const r10Wr = Math.round((r10Wins / recent10.length) * 100);
+          const streak = r10Wr >= 80 ? "HOT STREAK 🔥" : r10Wr >= 60 ? "solid" : r10Wr >= 40 ? "mixed" : "COLD — tighten filters";
+          lines.push(`RECENT MOMENTUM (last ${recent10.length}): ${r10Wins}/${recent10.length} (${r10Wr}%) — ${streak}`);
         }
-        if (risingTrades.length > 0) {
-          const rWins = risingTrades.filter((t) => t.outcome === "win").length;
-          trendStats.push(`Rising(>0.5%): ${rWins}/${risingTrades.length}W (${Math.round((rWins / risingTrades.length) * 100)}%)`);
+
+        // Biggest wins and losses
+        const sortedByPnl = [...allTrades].sort((a, b) => b.pnl - a.pnl);
+        const biggestWin = sortedByPnl[0];
+        const biggestLoss = sortedByPnl[sortedByPnl.length - 1];
+        if (biggestWin && biggestWin.pnl > 0) {
+          lines.push(`BIGGEST WIN: $${biggestWin.pnl.toFixed(2)} on ${biggestWin.ticker}`);
         }
-        if (trendStats.length > 0) {
-          lines.push("BY BTC TREND: " + trendStats.join(" | "));
+        if (biggestLoss && biggestLoss.pnl < 0) {
+          lines.push(`BIGGEST LOSS: -$${Math.abs(biggestLoss.pnl).toFixed(2)} on ${biggestLoss.ticker}`);
         }
 
         // Recent losses (last 3)
         const recentLosses = losses.slice(0, 3);
         if (recentLosses.length > 0) {
-          lines.push("RECENT LOSSES:");
+          lines.push("RECENT LOSSES (avoid similar setups):");
           for (const l of recentLosses) {
-            const coin = l.coin ?? "?";
-            const hour = l.hour_et != null ? `${l.hour_et}h ET` : "?";
-            const trend = l.btc_trend_at_entry != null ? `BTC ${l.btc_trend_at_entry >= 0 ? "+" : ""}${l.btc_trend_at_entry.toFixed(2)}%` : "";
-            const loss = l.pnl != null ? `$${Math.abs(l.pnl).toFixed(2)}` : "?";
-            lines.push(`- ${coin} lost ${loss} at ${hour} ${trend}`);
+            lines.push(`- ${l.coin} lost $${Math.abs(l.pnl).toFixed(2)} on ${l.ticker}`);
           }
         }
-      } else {
-        // Fallback: simple wins/losses if not enough closed trades with outcome
-        try {
-          const { data: losses } = await supabase
-            .from("trades")
-            .select("notes, pnl")
-            .lt("pnl", 0)
-            .order("created_at", { ascending: false })
-            .limit(3);
-          if (losses && losses.length > 0) {
-            lines.push("");
+      }
+    } catch (kalshiErr) {
+      console.log(`  ⚠️  Memory: Kalshi settlements fetch failed (falling back to Supabase): ${kalshiErr instanceof Error ? kalshiErr.message : String(kalshiErr)}`);
+    }
+
+    // Layer 2 fallback — Supabase trades (if Kalshi settlements failed or returned < 3)
+    if (!kalshiPatternsDone) {
+      try {
+        const { data: closedTrades } = await supabase
+          .from("trades")
+          .select("coin, hour_et, btc_trend_at_entry, outcome, pnl, notes, created_at")
+          .not("outcome", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(50);
+
+        if (closedTrades && closedTrades.length >= 3) {
+          const wins = closedTrades.filter((t) => t.outcome === "win");
+          const losses = closedTrades.filter((t) => t.outcome === "loss");
+          const total = closedTrades.length;
+          const winRate = total > 0 ? Math.round((wins.length / total) * 100) : 0;
+          lines.push("");
+          lines.push(`TRADE PATTERNS (Supabase): ${total} closed | ${wins.length}W ${losses.length}L | ${winRate}% win rate`);
+
+          // By coin
+          const coins = ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB"];
+          const coinStats: string[] = [];
+          for (const c of coins) {
+            const coinTrades = closedTrades.filter((t) => t.coin === c);
+            if (coinTrades.length === 0) continue;
+            const coinWins = coinTrades.filter((t) => t.outcome === "win").length;
+            const coinWr = Math.round((coinWins / coinTrades.length) * 100);
+            const edge = coinWr >= 75 ? "strong" : coinWr >= 50 ? "moderate" : "weak";
+            coinStats.push(`${c}: ${coinTrades.length} trades, ${coinWins}W (${coinWr}%) — ${edge}`);
+          }
+          if (coinStats.length > 0) {
+            lines.push("BY COIN: " + coinStats.join(" | "));
+          }
+
+          // Recent losses
+          const recentLosses = losses.slice(0, 3);
+          if (recentLosses.length > 0) {
             lines.push("RECENT LOSSES:");
-            for (const t of losses) {
-              lines.push(`- Lost $${Math.abs(t.pnl).toFixed(2)} | ${(t.notes ?? "").slice(0, 60)}`);
+            for (const l of recentLosses) {
+              const coin = l.coin ?? "?";
+              const loss = l.pnl != null ? `$${Math.abs(l.pnl).toFixed(2)}` : "?";
+              lines.push(`- ${coin} lost ${loss}`);
             }
           }
-        } catch { /* silent */ }
-      }
-    } catch {
-      // Silent — pattern analysis is non-critical
+        }
+      } catch { /* silent fallback */ }
     }
   } catch {
     // Total failure — return empty, don't break the feed
