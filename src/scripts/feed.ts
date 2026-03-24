@@ -94,13 +94,46 @@ const PRICE_MIN = 0.02;
 const PRICE_MAX = 0.98;
 const POLL_INTERVAL_MS = 30_000; // 30 seconds
 const PAPER_MODE = false; // Set true to log trades without placing real orders
-const MAX_POSITIONS = 8;       // Max simultaneous open positions
 const MIN_BALANCE_FLOOR = 5.00; // Never trade below this balance ($)
-const MAX_TRADE_DOLLARS = 1.25; // Max cost per single trade ($)
+
+// Dynamic position sizing — scales with bankroll + confidence
+const POSITION_SIZE_PCT = 0.02;       // 2% of balance per trade (base)
+const MIN_TRADE_DOLLARS = 0.50;       // Floor: never less than $0.50
+const MAX_TRADE_DOLLARS_CAP = 5.00;   // Ceiling: never more than $5.00 per trade
+const MAX_POSITIONS_PCT = 0.25;       // Deploy up to 25% of balance across all positions
+const MAX_POSITIONS_FLOOR = 8;        // Minimum positions allowed
+const MAX_POSITIONS_CEIL = 20;        // Maximum positions allowed
+
+// Legacy constant kept for backward-compat references
+const MAX_TRADE_DOLLARS = 1.25;       // Used as fallback only
 const TAKE_PROFIT_PCT = 25;    // Sell when position is up 25%+
 const STOP_LOSS_PCT = -40;     // Sell when position is down 40%+
 const DAILY_PROFIT_TARGET = 3.00; // Stop trading after +$3 daily P&L
 const DAILY_LOSS_LIMIT = -5.00;   // Stop trading after -$5 daily P&L
+
+// ---------------------------------------------------------------------------
+// Dynamic position sizing — scales with bankroll + Claude confidence
+// ---------------------------------------------------------------------------
+function calculateTradeSize(balance: number, confidence: number): number {
+  const base = balance * POSITION_SIZE_PCT;
+  let multiplier = 0.55; // default for 67% confidence
+  if (confidence >= 90) multiplier = 1.0;
+  else if (confidence >= 80) multiplier = 0.85;
+  else if (confidence >= 70) multiplier = 0.70;
+  // else 67-69 stays at 0.55
+  let tradeSize = base * multiplier;
+  tradeSize = Math.max(MIN_TRADE_DOLLARS, tradeSize);
+  tradeSize = Math.min(MAX_TRADE_DOLLARS_CAP, tradeSize);
+  return Math.round(tradeSize * 100) / 100;
+}
+
+function calculateMaxPositions(balance: number, tradeSize: number): number {
+  const totalDeployable = balance * MAX_POSITIONS_PCT;
+  let maxPos = Math.floor(totalDeployable / tradeSize);
+  maxPos = Math.max(MAX_POSITIONS_FLOOR, maxPos);
+  maxPos = Math.min(MAX_POSITIONS_CEIL, maxPos);
+  return maxPos;
+}
 
 const SPORTS_KEYWORDS = [
   "nba", "nfl", "ufc", "football", "basketball", "soccer",
@@ -451,7 +484,24 @@ async function autoExecTrade(
       return;
     }
 
-    // Safety Check 1 — Max positions cap (live from Kalshi, filter by actual exposure)
+    // Safety Check 1 — Balance floor + dynamic sizing
+    let balanceDollars = 25; // fallback if fetch fails
+    try {
+      const balData = await kalshiFetch<{ balance: number }>("GET", "/portfolio/balance");
+      balanceDollars = balData.balance / 100; // Kalshi returns cents
+      if (balanceDollars < MIN_BALANCE_FLOOR) {
+        console.log(`  🚫 SKIP AUTO-EXEC: balance too low ($${balanceDollars.toFixed(2)} < $${MIN_BALANCE_FLOOR} floor)`);
+        return;
+      }
+    } catch (balErr) {
+      console.warn(`  ⚠️  Balance check failed (using $${balanceDollars} fallback): ${balErr instanceof Error ? balErr.message : String(balErr)}`);
+    }
+
+    // Dynamic position sizing based on balance + confidence
+    const dynamicTradeSize = calculateTradeSize(balanceDollars, confidence);
+    const dynamicMaxPositions = calculateMaxPositions(balanceDollars, dynamicTradeSize);
+
+    // Safety Check 2 — Max positions cap (live from Kalshi, filter by actual exposure)
     try {
       const posData = await kalshiFetch<{
         market_positions: { market_exposure_dollars?: string }[];
@@ -464,25 +514,13 @@ async function autoExecTrade(
       const posCount = allPositions.filter(
         (p) => parseFloat(String(p.market_exposure_dollars ?? "0")) > 0
       ).length;
-      console.log(`  📊 Kalshi positions: ${posCount} open (${allPositions.length} total unsettled)`);
-      if (posCount >= MAX_POSITIONS) {
-        console.log(`  🚫 SKIP AUTO-EXEC: max positions reached (${posCount}/${MAX_POSITIONS})`);
+      console.log(`  📊 Kalshi positions: ${posCount} open (${allPositions.length} total unsettled) | max: ${dynamicMaxPositions} | size: $${dynamicTradeSize}`);
+      if (posCount >= dynamicMaxPositions) {
+        console.log(`  🚫 SKIP AUTO-EXEC: max positions reached (${posCount}/${dynamicMaxPositions})`);
         return;
       }
     } catch (posErr) {
       console.warn(`  ⚠️  Positions check failed (continuing): ${posErr instanceof Error ? posErr.message : String(posErr)}`);
-    }
-
-    // Safety Check 2 — Balance floor
-    try {
-      const balData = await kalshiFetch<{ balance: number }>("GET", "/portfolio/balance");
-      const balanceDollars = balData.balance / 100; // Kalshi returns cents
-      if (balanceDollars < MIN_BALANCE_FLOOR) {
-        console.log(`  🚫 SKIP AUTO-EXEC: balance too low ($${balanceDollars.toFixed(2)} < $${MIN_BALANCE_FLOOR} floor)`);
-        return;
-      }
-    } catch (balErr) {
-      console.warn(`  ⚠️  Balance check failed (continuing): ${balErr instanceof Error ? balErr.message : String(balErr)}`);
     }
 
     // Fetch live market data to get current ask price for immediate fill
@@ -515,20 +553,22 @@ async function autoExecTrade(
       }
     }
 
-    // Safety Check 3 — Max trade cost
-    const tradeCostDollars = priceCents / 100;
-    if (tradeCostDollars > MAX_TRADE_DOLLARS) {
-      console.log(`  🚫 SKIP AUTO-EXEC: trade cost $${tradeCostDollars.toFixed(2)} exceeds $${MAX_TRADE_DOLLARS} max`);
-      return;
-    }
-
     // Sanity: price must be 1-99 cents
     if (priceCents < 1 || priceCents > 99) {
       console.error(`  ❌ AUTO-EXEC FAILED: ${kalshiTicker} invalid price ${priceCents}c`);
       return;
     }
 
-    const count = 1; // 1 contract = ~$0.01-$0.99 max risk
+    // Safety Check 3 — Dynamic trade cost check
+    const tradeCostPerContract = priceCents / 100;
+    if (tradeCostPerContract > dynamicTradeSize) {
+      console.log(`  🚫 SKIP AUTO-EXEC: price $${tradeCostPerContract.toFixed(2)} exceeds dynamic size $${dynamicTradeSize} (bal:$${balanceDollars.toFixed(2)} conf:${confidence}%)`);
+      return;
+    }
+
+    // Dynamic contract count — buy as many contracts as dynamicTradeSize allows
+    const count = Math.max(1, Math.floor(dynamicTradeSize / tradeCostPerContract));
+    const totalCost = (count * tradeCostPerContract);
 
     const body = {
       ticker: kalshiTicker,
@@ -539,7 +579,7 @@ async function autoExecTrade(
       ...(side === "yes" ? { yes_price: priceCents } : { no_price: priceCents }),
     };
 
-    console.log(`  🤖 AUTO-EXEC: placing ${side.toUpperCase()} on ${kalshiTicker} @ ${priceCents}c...`);
+    console.log(`  🤖 AUTO-EXEC: placing ${side.toUpperCase()} on ${kalshiTicker} @ ${priceCents}c | size: $${totalCost.toFixed(2)} (${count} contracts) | max-pos: ${dynamicMaxPositions} (conf: ${confidence}%)`);
 
     const data = await kalshiFetch<Record<string, unknown>>("POST", "/portfolio/orders", body);
 
@@ -555,11 +595,11 @@ async function autoExecTrade(
       return;
     }
 
-    console.log(`  ✅ AUTO-EXEC: ${kalshiTicker} ${side.toUpperCase()} @ ${priceCents}c | order ${orderId}`);
+    console.log(`  ✅ AUTO-EXEC: ${kalshiTicker} ${side.toUpperCase()} @ ${priceCents}c x${count} ($${totalCost.toFixed(2)}) | order ${orderId}`);
 
     // Telegram alert for trade execution
     sendTelegramMessage(
-      `*🤖 Trade Executed*\n\nMarket: ${kalshiTicker}\nSide: ${side.toUpperCase()}\nPrice: ${priceCents}c\nSize: $${MAX_TRADE_DOLLARS}\nConfidence: ${confidence}%\nOrder: ${orderId}`
+      `*🤖 Trade Executed*\n\nMarket: ${kalshiTicker}\nSide: ${side.toUpperCase()}\nPrice: ${priceCents}c\nContracts: ${count}\nCost: $${totalCost.toFixed(2)}\nConfidence: ${confidence}%\nOrder: ${orderId}`
     ).catch(() => {});
 
     // Save trade to Supabase
@@ -626,10 +666,10 @@ async function autoExecTrade(
       direction: side,
       entry_price: yesPrice,
       shares: count,
-      entry_cost: priceCents / 100,
+      entry_cost: totalCost,
       strategy: strategy ?? "unknown",
       status: "open",
-      notes: `AUTO-EXEC: ${orderId} | ${kalshiTicker} | conf:${confidence}%`,
+      notes: `AUTO-EXEC: ${orderId} | ${kalshiTicker} | conf:${confidence}% | ${count}x@${priceCents}c`,
       hour_et: hourET,
       btc_trend_at_entry: cryptoPrices?.btcTrend5m ?? null,
       coin: tradeCoin,
