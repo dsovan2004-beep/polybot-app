@@ -594,15 +594,18 @@ async function autoExecTrade(
     const tickerLow = kalshiTicker.toLowerCase();
     let tradeCoin = "OTHER";
     let tradeCoinPrice = 0;
-    if (tickerLow.startsWith("kxbtcd") || tickerLow.startsWith("kxbtc15m")) {
+    if (tickerLow.startsWith("kxbtcd") || tickerLow.startsWith("kxbtc15m") || tickerLow.startsWith("kxbtcw")) {
       tradeCoin = "BTC";
       tradeCoinPrice = cryptoPrices?.btc ?? 0;
-    } else if (tickerLow.startsWith("kxethd")) {
+    } else if (tickerLow.startsWith("kxethd") || tickerLow.startsWith("kxethw")) {
       tradeCoin = "ETH";
       tradeCoinPrice = cryptoPrices?.eth ?? 0;
     } else if (tickerLow.startsWith("kxsold")) {
       tradeCoin = "SOL";
       tradeCoinPrice = cryptoPrices?.sol ?? 0;
+    } else if (tickerLow.startsWith("kxxrpd")) {
+      tradeCoin = "XRP";
+      tradeCoinPrice = cryptoPrices?.xrp ?? 0;
     }
     const threshMatch = kalshiTicker.match(/-T([\d.]+)$/);
     const tradeThreshold = threshMatch ? parseFloat(threshMatch[1]) : 0;
@@ -875,7 +878,7 @@ Volume: $${volume.toLocaleString()}${btcPrice ? `\nCurrent BTC price: $${btcPric
       (() => {
         if (!cryptoPrices) return "";
         const t = kalshiTicker.toLowerCase();
-        const isCrypto = t.includes("updown") || t.startsWith("kxbtc15m") || t.startsWith("kxbtcd") || t.startsWith("kxethd") || t.startsWith("kxsold");
+        const isCrypto = t.includes("updown") || t.startsWith("kxbtc15m") || t.startsWith("kxbtcd") || t.startsWith("kxbtcw") || t.startsWith("kxethd") || t.startsWith("kxethw") || t.startsWith("kxsold") || t.startsWith("kxxrpd");
         if (!isCrypto) return "";
         return `\nLIVE MARKET DATA (Coinbase): BTC=$${cryptoPrices.btc.toLocaleString()} (${cryptoPrices.btcTrend5m >= 0 ? "+" : ""}${cryptoPrices.btcTrend5m.toFixed(2)}% 5min). ETH=$${cryptoPrices.eth.toLocaleString()}. SOL=$${cryptoPrices.sol.toFixed(0)}. XRP=$${cryptoPrices.xrp.toFixed(2)}. Use the 5-min trend to assess UP or DOWN direction for the next 15 minutes. Rising momentum = lean UP. Falling momentum = lean DOWN.`;
       })()
@@ -1346,6 +1349,9 @@ async function pollKalshi(): Promise<void> {
       "/markets?series_ticker=KXBTC15M&status=open&limit=200", // BTC 15-min up/down
       "/markets?series_ticker=KXETHD&status=open&limit=200",   // ETH hourly
       "/markets?series_ticker=KXSOLD&status=open&limit=200",   // SOL hourly
+      "/markets?series_ticker=KXBTCW&status=open&limit=200",   // BTC weekly
+      "/markets?series_ticker=KXETHW&status=open&limit=200",   // ETH weekly
+      "/markets?series_ticker=KXXRPD&status=open&limit=200",   // XRP hourly
     ];
 
     let allMarkets: KalshiMarketFromAPI[] = [];
@@ -1388,7 +1394,7 @@ async function pollKalshi(): Promise<void> {
     if (totalPolled === 1) {
       const cryptoCount = allMarkets.filter((m) => {
         const t = m.ticker.toLowerCase();
-        return t.startsWith("kxbtcd") || t.startsWith("kxbtc15m") || t.startsWith("kxethd") || t.startsWith("kxsold");
+        return t.startsWith("kxbtcd") || t.startsWith("kxbtc15m") || t.startsWith("kxbtcw") || t.startsWith("kxethd") || t.startsWith("kxethw") || t.startsWith("kxsold") || t.startsWith("kxxrpd");
       }).length;
       console.log(`  🪙 Crypto short-term markets fetched: ${cryptoCount}`);
     }
@@ -1439,8 +1445,11 @@ async function pollKalshi(): Promise<void> {
         tickerLower.includes("updown") ||
         tickerLower.startsWith("kxbtc15m") ||
         tickerLower.startsWith("kxbtcd") ||
+        tickerLower.startsWith("kxbtcw") ||
         tickerLower.startsWith("kxethd") ||
-        tickerLower.startsWith("kxsold");
+        tickerLower.startsWith("kxethw") ||
+        tickerLower.startsWith("kxsold") ||
+        tickerLower.startsWith("kxxrpd");
 
       let confThreshold: number;
 
@@ -1546,12 +1555,14 @@ async function pollKalshi(): Promise<void> {
           const threshold = parseFloat(thresholdMatch[1]);
           // Determine which coin's price to compare against
           let coinPrice = 0;
-          if (tickerLower.startsWith("kxbtcd") || tickerLower.startsWith("kxbtc15m")) {
+          if (tickerLower.startsWith("kxbtcd") || tickerLower.startsWith("kxbtc15m") || tickerLower.startsWith("kxbtcw")) {
             coinPrice = cryptoPrices.btc;
-          } else if (tickerLower.startsWith("kxethd")) {
+          } else if (tickerLower.startsWith("kxethd") || tickerLower.startsWith("kxethw")) {
             coinPrice = cryptoPrices.eth;
           } else if (tickerLower.startsWith("kxsold")) {
             coinPrice = cryptoPrices.sol;
+          } else if (tickerLower.startsWith("kxxrpd")) {
+            coinPrice = cryptoPrices.xrp;
           }
 
           if (coinPrice > 0) {
