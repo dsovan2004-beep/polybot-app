@@ -594,10 +594,10 @@ async function autoExecTrade(
     const tickerLow = kalshiTicker.toLowerCase();
     let tradeCoin = "OTHER";
     let tradeCoinPrice = 0;
-    if (tickerLow.startsWith("kxbtcd") || tickerLow.startsWith("kxbtc15m") || tickerLow.startsWith("kxbtcw")) {
+    if (tickerLow.startsWith("kxbtcd") || tickerLow.startsWith("kxbtc15m")) {
       tradeCoin = "BTC";
       tradeCoinPrice = cryptoPrices?.btc ?? 0;
-    } else if (tickerLow.startsWith("kxethd") || tickerLow.startsWith("kxethw")) {
+    } else if (tickerLow.startsWith("kxethd")) {
       tradeCoin = "ETH";
       tradeCoinPrice = cryptoPrices?.eth ?? 0;
     } else if (tickerLow.startsWith("kxsold")) {
@@ -606,6 +606,12 @@ async function autoExecTrade(
     } else if (tickerLow.startsWith("kxxrpd")) {
       tradeCoin = "XRP";
       tradeCoinPrice = cryptoPrices?.xrp ?? 0;
+    } else if (tickerLow.startsWith("kxdoged")) {
+      tradeCoin = "DOGE";
+      tradeCoinPrice = cryptoPrices?.doge ?? 0;
+    } else if (tickerLow.startsWith("kxbnbd")) {
+      tradeCoin = "BNB";
+      tradeCoinPrice = cryptoPrices?.bnb ?? 0;
     }
     const threshMatch = kalshiTicker.match(/-T([\d.]+)$/);
     const tradeThreshold = threshMatch ? parseFloat(threshMatch[1]) : 0;
@@ -878,9 +884,9 @@ Volume: $${volume.toLocaleString()}${btcPrice ? `\nCurrent BTC price: $${btcPric
       (() => {
         if (!cryptoPrices) return "";
         const t = kalshiTicker.toLowerCase();
-        const isCrypto = t.includes("updown") || t.startsWith("kxbtc15m") || t.startsWith("kxbtcd") || t.startsWith("kxbtcw") || t.startsWith("kxethd") || t.startsWith("kxethw") || t.startsWith("kxsold") || t.startsWith("kxxrpd");
+        const isCrypto = t.includes("updown") || t.startsWith("kxbtc15m") || t.startsWith("kxbtcd") || t.startsWith("kxethd") || t.startsWith("kxsold") || t.startsWith("kxxrpd") || t.startsWith("kxdoged") || t.startsWith("kxbnbd");
         if (!isCrypto) return "";
-        return `\nLIVE MARKET DATA (Coinbase): BTC=$${cryptoPrices.btc.toLocaleString()} (${cryptoPrices.btcTrend5m >= 0 ? "+" : ""}${cryptoPrices.btcTrend5m.toFixed(2)}% 5min). ETH=$${cryptoPrices.eth.toLocaleString()}. SOL=$${cryptoPrices.sol.toFixed(0)}. XRP=$${cryptoPrices.xrp.toFixed(2)}. Use the 5-min trend to assess UP or DOWN direction for the next 15 minutes. Rising momentum = lean UP. Falling momentum = lean DOWN.`;
+        return `\nLIVE MARKET DATA (Coinbase): BTC=$${cryptoPrices.btc.toLocaleString()} (${cryptoPrices.btcTrend5m >= 0 ? "+" : ""}${cryptoPrices.btcTrend5m.toFixed(2)}% 5min). ETH=$${cryptoPrices.eth.toLocaleString()}. SOL=$${cryptoPrices.sol.toFixed(0)}. XRP=$${cryptoPrices.xrp.toFixed(2)}. DOGE=$${cryptoPrices.doge.toFixed(4)}. BNB=$${cryptoPrices.bnb.toFixed(0)}. Use the 5-min trend to assess UP or DOWN direction for the next 15 minutes. Rising momentum = lean UP. Falling momentum = lean DOWN.`;
       })()
     }
 
@@ -1139,7 +1145,7 @@ async function buildMemoryContext(): Promise<string> {
 // Returns null if any fetch fails (fail open — updown markets still analyzed, just without price data)
 // ---------------------------------------------------------------------------
 interface CryptoPrices {
-  btc: number; eth: number; sol: number; xrp: number;
+  btc: number; eth: number; sol: number; xrp: number; doge: number; bnb: number;
   btcTrend5m: number;   // percent change over last 5 minutes
   btcTrend15m: number;  // percent change over last 15 minutes
   btcTrend1h: number;   // percent change over last 1 hour
@@ -1148,12 +1154,14 @@ interface CryptoPrices {
 
 async function fetchLiveCryptoPrices(): Promise<CryptoPrices | null> {
   try {
-    const coins = ["BTC", "ETH", "SOL", "XRP"] as const;
+    const requiredCoins = ["BTC", "ETH", "SOL", "XRP"] as const;
+    const optionalCoins = ["DOGE", "BNB"] as const;
+    const allCoins = [...requiredCoins, ...optionalCoins];
     const spots: Record<string, number> = {};
 
     // Fetch spot prices in parallel (5s timeout each)
     const spotResults = await Promise.all(
-      coins.map(async (coin) => {
+      allCoins.map(async (coin) => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 5000);
         try {
@@ -1173,8 +1181,21 @@ async function fetchLiveCryptoPrices(): Promise<CryptoPrices | null> {
     );
 
     for (const r of spotResults) {
-      if (!r || isNaN(r.price)) return null;
+      if (!r || isNaN(r.price)) {
+        // Required coins must succeed; optional coins fail open with 0
+        if (r === null) continue; // unknown which coin failed — check below
+        spots[r.coin] = 0;
+        continue;
+      }
       spots[r.coin] = r.price;
+    }
+    // Verify required coins are present
+    for (const c of requiredCoins) {
+      if (!spots[c] || spots[c] <= 0) return null;
+    }
+    // Default optional coins to 0 if missing
+    for (const c of optionalCoins) {
+      if (!spots[c]) spots[c] = 0;
     }
 
     // Fetch BTC 5-min candles for trend (2 candles, 300s granularity)
@@ -1287,6 +1308,7 @@ async function fetchLiveCryptoPrices(): Promise<CryptoPrices | null> {
 
     const prices: CryptoPrices = {
       btc: spots.BTC, eth: spots.ETH, sol: spots.SOL, xrp: spots.XRP,
+      doge: spots.DOGE, bnb: spots.BNB,
       btcTrend5m, btcTrend15m, btcTrend1h, btcChange24h,
     };
 
@@ -1296,7 +1318,7 @@ async function fetchLiveCryptoPrices(): Promise<CryptoPrices | null> {
     const t24h = btcChange24h >= 0 ? "+" : "";
     console.log(
       `  💰 Live prices: BTC=$${prices.btc.toLocaleString()} (${t5}${btcTrend5m.toFixed(2)}% 5m, ${t15}${btcTrend15m.toFixed(2)}% 15m, ${t1h}${btcTrend1h.toFixed(2)}% 1h, ${t24h}${btcChange24h.toFixed(1)}% 24h) ` +
-      `ETH=$${prices.eth.toLocaleString()} SOL=$${prices.sol.toFixed(0)} XRP=$${prices.xrp.toFixed(2)}`
+      `ETH=$${prices.eth.toLocaleString()} SOL=$${prices.sol.toFixed(0)} XRP=$${prices.xrp.toFixed(2)} DOGE=$${prices.doge.toFixed(4)} BNB=$${prices.bnb.toFixed(0)}`
     );
     return prices;
   } catch {
@@ -1349,9 +1371,9 @@ async function pollKalshi(): Promise<void> {
       "/markets?series_ticker=KXBTC15M&status=open&limit=200", // BTC 15-min up/down
       "/markets?series_ticker=KXETHD&status=open&limit=200",   // ETH hourly
       "/markets?series_ticker=KXSOLD&status=open&limit=200",   // SOL hourly
-      "/markets?series_ticker=KXBTCW&status=open&limit=200",   // BTC weekly
-      "/markets?series_ticker=KXETHW&status=open&limit=200",   // ETH weekly
       "/markets?series_ticker=KXXRPD&status=open&limit=200",   // XRP hourly
+      "/markets?series_ticker=KXDOGED&status=open&limit=200",  // DOGE hourly
+      "/markets?series_ticker=KXBNBD&status=open&limit=200",   // BNB hourly
     ];
 
     let allMarkets: KalshiMarketFromAPI[] = [];
@@ -1394,7 +1416,7 @@ async function pollKalshi(): Promise<void> {
     if (totalPolled === 1) {
       const cryptoCount = allMarkets.filter((m) => {
         const t = m.ticker.toLowerCase();
-        return t.startsWith("kxbtcd") || t.startsWith("kxbtc15m") || t.startsWith("kxbtcw") || t.startsWith("kxethd") || t.startsWith("kxethw") || t.startsWith("kxsold") || t.startsWith("kxxrpd");
+        return t.startsWith("kxbtcd") || t.startsWith("kxbtc15m") || t.startsWith("kxethd") || t.startsWith("kxsold") || t.startsWith("kxxrpd") || t.startsWith("kxdoged") || t.startsWith("kxbnbd");
       }).length;
       console.log(`  🪙 Crypto short-term markets fetched: ${cryptoCount}`);
     }
@@ -1445,11 +1467,11 @@ async function pollKalshi(): Promise<void> {
         tickerLower.includes("updown") ||
         tickerLower.startsWith("kxbtc15m") ||
         tickerLower.startsWith("kxbtcd") ||
-        tickerLower.startsWith("kxbtcw") ||
         tickerLower.startsWith("kxethd") ||
-        tickerLower.startsWith("kxethw") ||
         tickerLower.startsWith("kxsold") ||
-        tickerLower.startsWith("kxxrpd");
+        tickerLower.startsWith("kxxrpd") ||
+        tickerLower.startsWith("kxdoged") ||
+        tickerLower.startsWith("kxbnbd");
 
       let confThreshold: number;
 
@@ -1555,14 +1577,18 @@ async function pollKalshi(): Promise<void> {
           const threshold = parseFloat(thresholdMatch[1]);
           // Determine which coin's price to compare against
           let coinPrice = 0;
-          if (tickerLower.startsWith("kxbtcd") || tickerLower.startsWith("kxbtc15m") || tickerLower.startsWith("kxbtcw")) {
+          if (tickerLower.startsWith("kxbtcd") || tickerLower.startsWith("kxbtc15m")) {
             coinPrice = cryptoPrices.btc;
-          } else if (tickerLower.startsWith("kxethd") || tickerLower.startsWith("kxethw")) {
+          } else if (tickerLower.startsWith("kxethd")) {
             coinPrice = cryptoPrices.eth;
           } else if (tickerLower.startsWith("kxsold")) {
             coinPrice = cryptoPrices.sol;
           } else if (tickerLower.startsWith("kxxrpd")) {
             coinPrice = cryptoPrices.xrp;
+          } else if (tickerLower.startsWith("kxdoged")) {
+            coinPrice = cryptoPrices.doge;
+          } else if (tickerLower.startsWith("kxbnbd")) {
+            coinPrice = cryptoPrices.bnb;
           }
 
           if (coinPrice > 0) {
