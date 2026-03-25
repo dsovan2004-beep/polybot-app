@@ -97,7 +97,7 @@ const PAPER_MODE = false; // Set true to log trades without placing real orders
 const MIN_BALANCE_FLOOR = 5.00; // Never trade below this balance ($)
 
 // Dynamic position sizing — scales with bankroll + confidence
-const POSITION_SIZE_PCT = 0.02;       // 2% of balance per trade (base)
+const POSITION_SIZE_PCT = 0.03;       // 3% of balance per trade (base)
 const MIN_TRADE_DOLLARS = 0.50;       // Floor: never less than $0.50
 const MAX_TRADE_DOLLARS_CAP = 5.00;   // Ceiling: never more than $5.00 per trade
 const MAX_POSITIONS_PCT = 0.25;       // Deploy up to 25% of balance across all positions
@@ -1734,13 +1734,21 @@ async function pollKalshi(): Promise<void> {
           }
         }
 
-        // YES price sweet spot filter — best risk/reward at 10c-55c
-        // YES < 10c → NO costs 90c+ (minimal profit) → SKIP
-        // YES > 55c → threshold too likely to hit → risky for NO → SKIP
-        // YES 10c-55c → NO pays 45c-90c → SWEET SPOT → ANALYZE ✅
+        // YES price range filter — skip extremes
         const yesCents = Math.round(yesPrice * 100);
         if (yesCents < 10 || yesCents > 55) {
-          console.log(`  💰 SKIP: ${m.ticker} YES price ${yesCents}c outside 10c-55c sweet spot`);
+          console.log(`  💰 SKIP: ${m.ticker} YES price ${yesCents}c outside 10c-55c range`);
+          totalFiltered++;
+          continue;
+        }
+
+        // NO price sweet spot filter — data-driven optimal band
+        // NO price = 1.00 - YES price.  Only trade NO at 68-82¢.
+        // 71-80¢: 88% WR, +$1.90 | 81-90¢: 69% WR, -$4.10 | 55-70¢: 44% WR, -$1.90
+        // YES 18-32¢ → NO 68-82¢ = SWEET SPOT ✅
+        const noCents = 100 - yesCents;
+        if (noCents < 68 || noCents > 82) {
+          console.log(`  💰 SKIP: ${m.ticker} NO price ${noCents}c outside sweet spot 68-82c`);
           totalFiltered++;
           continue;
         }
