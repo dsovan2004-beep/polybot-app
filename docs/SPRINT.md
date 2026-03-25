@@ -322,34 +322,77 @@ Polymarket → Kalshi ticker mismatch was causing all EXEC failures. Instead of 
 | 39b | Lower BTC distance $250→$150, raise YES ceiling 50¢→55¢ — catches evening markets previously blocked | ✅ COMPLETE |
 
 **Key Milestones — Sprint 11:**
-- **Dynamic position sizing LIVE:** POSITION_SIZE_PCT=2% of balance, confidence multiplier (55%→100% scaling), multi-contract orders (2x at current balance ~$1.70/trade)
-- **Constants:** MIN_TRADE=$0.50, MAX_TRADE=$5.00, MAX_POSITIONS dynamic (25% of balance / trade size, floor 8, ceiling 20)
+- **Dynamic position sizing LIVE:** POSITION_SIZE_PCT=3% of balance (raised from 2%), confidence multiplier (55%→100% scaling), multi-contract orders
+- **Constants:** POSITION_SIZE_PCT=0.03, MIN_TRADE=$0.50, MAX_TRADE=$5.00, MAX_POSITIONS dynamic (25% of balance / trade size, floor 8, ceiling 20)
 - **Smart memory LIVE:** 14 lines of context per poll cycle from Kalshi settlements API
   - Calculates: overall WR, per-coin WR, BTC threshold bands, momentum (last 10), biggest wins/losses, recent losses
   - Fallback to Supabase trades table if Kalshi fetch fails or returns < 3 results
 - **Distance + YES ceiling tuned:** MIN_BTC_DISTANCE $250→$150, MAX_YES_PRICE 50¢→55¢
 
-**Performance (March 25, 2026):**
-- Portfolio: ~$95-97 (bankroll deposited: $100)
-- 48+ settled trades | 75% win rate | -$3.04 net P&L
-- Key insight: bot is break-even/slightly negative due to 81-90¢ NO band losses
-- Fix #39 (price sweet spot filter) expected to flip P&L positive once 100+ trades validate
+**Performance (March 25, 2026 EOD):**
+- Portfolio: ~$92-94 (bankroll deposited: $100)
+- 57 settled trades | 75.4% win rate (43W/14L)
+- Sweet spot analysis:
+  - 68-80¢ band: 88% WR, +$1.90 profit (17 trades) ← TARGET
+  - 81-90¢ band: 69% WR, -$4.10 loss (26 trades) ← NOW BLOCKED by Fix #39
+  - 55-67¢ band: 44% WR, -$1.90 loss ← NOW BLOCKED by Fix #39
 
 **Files modified:**
 - src/scripts/feed.ts (all 3 fixes)
 
 ---
 
-## Sprint 12: Strategy Optimization — BACKLOG 📋
-**Goal:** Implement validated filters and expand coin coverage (pending 100+ trades data)
+## Sprint 12: Sweet Spot Filter + Dashboard — COMPLETE ✅
+**Dates:** Mar 25
+**Goal:** Data-driven price filter, dashboard rebuild, position sizing
 
 | # | Task | Status |
 |---|------|--------|
-| 39 | Price sweet spot filter — only trade when NO price 70-82¢ (data: 87% WR, +$1.45 profit in 71-80¢ band; 81-90¢ band = 70% WR, -$3.10 loss) | ⬜ WAITING FOR DATA |
+| 8 | Dashboard rebuild — portfolio header, open positions w/ verdicts, stats bar w/ real Kalshi P&L, recent trades log | ✅ COMPLETE |
+| 39 | NO price sweet spot filter 68-82¢ only (YES 18-32¢) — blocks losing 81-90¢ and 55-67¢ bands | ✅ COMPLETE |
+| — | Position size raised: POSITION_SIZE_PCT 0.02 → 0.03 (fewer trades = bigger size) | ✅ COMPLETE |
+| — | 3 dashboard bugs: win/loss calc (>=0 = WIN), ticker strike parsing, crypto-only market filter | ✅ COMPLETE |
+
+**Key Milestones — Sprint 12:**
+- **NO sweet spot filter LIVE:** Only trade NO at 68-82¢ (YES 18-32¢)
+  - 68-80¢ band: 88% WR, +$1.90 profit (17 trades) ← KEEP
+  - 81-90¢ band: 69% WR, -$4.10 loss (26 trades) ← BLOCKED
+  - 55-67¢ band: 44% WR, -$1.90 loss ← BLOCKED
+- **Position size raised:** 2% → 3% of balance per trade (fewer high-quality trades, bigger size each)
+- **Dashboard rebuild LIVE:** polybot-app.pages.dev/bot
+  - Portfolio header (value, cash, positions)
+  - Open positions with verdicts (likely WIN / coin flip / at risk)
+  - Stats bar with real Kalshi P&L (57 trades, 75.4% WR)
+  - Recent trades log from Kalshi settlements
+  - Crypto-only Markets & Signals (no more politics/economics)
+  - Strike price parsing: KXBTCD-26MAR2513-T71199.99 → "BTC $71,200 · 1pm ET"
+- **New API routes:** /api/positions (Kalshi balance + open positions + verdicts), /api/stats (settled trades + P&L)
+- **8-layer filter pipeline now:** overnight → pump → volume → distance → YES range → NO sweet spot → direction → Claude
+
+**Performance (March 25, 2026 EOD):**
+- Portfolio: ~$92-94 (bankroll deposited: $100)
+- 57 settled trades | 75.4% WR (43W/14L)
+- Strategy validated: NO trades in 68-82¢ band = highest WR + positive P&L
+
+**Files modified:**
+- src/scripts/feed.ts (Fix #39 sweet spot + position size)
+- src/app/api/positions/route.ts (NEW — Kalshi positions + verdicts)
+- src/app/api/stats/route.ts (NEW — Kalshi settled trades + P&L)
+- src/app/api/markets/route.ts (crypto-only filter)
+- src/app/bot/page.tsx (full dashboard rebuild)
+- src/lib/kalshi.ts (export kalshiFetch for API routes)
+
+---
+
+## Sprint 13: Strategy Optimization — BACKLOG 📋
+**Goal:** Further optimize strategy and expand coin coverage
+
+| # | Task | Status |
+|---|------|--------|
 | 37 | Ban YES trades entirely — YES trades = 0% win rate historically | ⬜ WAITING FOR DATA |
 | — | Add HYPE coin (KXHYPED series) — visible on Kalshi sidebar, needs Coinbase price feed + ticker series | ⬜ NOT STARTED |
-| 8 | Trades log dashboard tab — full trade history with P&L per trade | ⬜ NOT STARTED |
 | 9 | Win rate by strategy — breakdown showing which strategies perform best | ⬜ NOT STARTED |
+| 40 | Time-of-day memory patterns — morning vs evening, weekday vs weekend WR (after 100+ more trades) | ⬜ NOT STARTED |
 
 **Future Backlog (unscheduled):**
 - Implement MACD(6/26/5) strategy on BTC 1-min candles

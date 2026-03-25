@@ -107,21 +107,35 @@
 - Files modified: feed.ts only
 
 ## Phase 11 — Trading Intelligence: COMPLETE ✅
-- **Dynamic position sizing LIVE:** 2% of balance × confidence multiplier (55%→100%), multi-contract orders
-- **Constants:** MIN_TRADE=$0.50, MAX_TRADE=$5.00, dynamic MAX_POSITIONS (25% of balance / trade size, floor 8, ceiling 20)
+- **Dynamic position sizing LIVE:** 3% of balance × confidence multiplier (55%→100%), multi-contract orders
+- **Constants:** POSITION_SIZE_PCT=0.03, MIN_TRADE=$0.50, MAX_TRADE=$5.00, dynamic MAX_POSITIONS (25% of balance / trade size, floor 8, ceiling 20)
 - **Smart memory LIVE:** Kalshi settlements API (up to 200 trades) → 14 lines of context per cycle
   - Overall WR, per-coin WR, BTC threshold bands, momentum (last 10), biggest wins/losses, recent losses
   - Fallback to Supabase trades table if Kalshi fetch fails
 - **Distance + YES ceiling tuned:** MIN_BTC_DISTANCE $250→$150, MAX_YES_PRICE 50¢→55¢
-- **Performance:** ~$95-97 portfolio, 48+ settled trades, 75% WR, -$3.04 net P&L
+- **Performance:** ~$92-94 portfolio, 57 settled trades, 75.4% WR (43W/14L)
 - Files modified: feed.ts only
 
-## Phase 12 — Strategy Optimization: BACKLOG 📋
-- Fix #39: Price sweet spot filter — only trade NO at 70-82¢ (pending 100+ trades validation)
+## Phase 12 — Sweet Spot Filter + Dashboard: COMPLETE ✅
+- **NO sweet spot filter LIVE:** Only trade NO at 68-82¢ (YES 18-32¢)
+  - 68-80¢ band: 88% WR, +$1.90 profit (17 trades) ← KEEP
+  - 81-90¢ band: 69% WR, -$4.10 loss (26 trades) ← BLOCKED
+  - 55-67¢ band: 44% WR, -$1.90 loss ← BLOCKED
+- **Position size raised:** POSITION_SIZE_PCT 0.02 → 0.03 (3% of balance per trade)
+- **Dashboard rebuild LIVE:** polybot-app.pages.dev/bot
+  - Portfolio header, open positions with verdicts, stats bar with real Kalshi P&L, recent trades log
+  - New API routes: /api/positions, /api/stats
+  - Crypto-only Markets & Signals, strike price parsing
+  - 3 bug fixes: win/loss calc, ticker parsing, crypto filter
+- **8-layer filter pipeline:** overnight → pump → volume → distance → YES range → NO sweet spot → direction → Claude
+- **Performance (Mar 25 EOD):** ~$92-94 portfolio, 57 trades, 75.4% WR (43W/14L)
+- Files modified: feed.ts, page.tsx, kalshi.ts, positions/route.ts (NEW), stats/route.ts (NEW), markets/route.ts
+
+## Phase 13 — Strategy Optimization: BACKLOG 📋
 - Fix #37: Ban YES trades entirely (0% historical WR)
 - Add HYPE coin (KXHYPED series)
-- Fix #8: Trades log dashboard tab
 - Fix #9: Win rate by strategy
+- Fix #40: Time-of-day memory patterns (after 100+ more trades)
 
 ### Future Backlog (unscheduled)
 - MACD(6/26/5) + Binance liquidation combined strategy
@@ -157,9 +171,10 @@
 | AI | ✅ Live | Claude Haiku (ANTHROPIC_API_KEY) — 20x cheaper |
 | Kalshi | ✅ Live | RSA-PSS signing, CFTC regulated exchange |
 | Telegram | ✅ Live | @Polybotsalerts_bot — signal + trade + kill alerts |
-| Data Feeds | ✅ Live | Kalshi REST polling every 30s, ~2,016 markets (1,115 general + ~980 crypto) |
+| Data Feeds | ✅ Live | Kalshi REST polling every 30s, ~2,016 markets (~980 crypto) |
 | Coinbase | ✅ Live | BTC/ETH/SOL/XRP/DOGE/BNB spot + 4 BTC trend timeframes (5m/15m/1h/24h) |
 | Feed | ✅ Running | Mac terminal (feed.ts with self-test + Telegram + pump detector + smart memory) |
-| Signals | ✅ Flowing | Claude analyzing 7 crypto series with live prices + 14-line memory context |
+| Signals | ✅ Flowing | Claude analyzing 7 crypto series with live prices + 12-16 line memory context |
+| Dashboard | ✅ Live | polybot-app.pages.dev/bot — positions, verdicts, Kalshi P&L, crypto-only |
 | First Trade | ✅ Placed | March 20, 2026 4:24 PM PT |
-| Balance | ✅ Tracked | ~$95-97 portfolio (deposited $100, 48+ trades, 75% WR) |
+| Balance | ✅ Tracked | ~$92-94 portfolio (deposited $100, 57 trades, 75.4% WR) |
