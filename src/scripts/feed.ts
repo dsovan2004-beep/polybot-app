@@ -1710,8 +1710,8 @@ async function pollKalshi(): Promise<void> {
 
           if (coinPrice > 0) {
             const distance = Math.abs(coinPrice - threshold);
-            // Min/max distance: BTC $250-$3000, ETH $20-$150, SOL $2-$10
-            const minDistance = coinPrice > 10000 ? 250 : coinPrice > 500 ? 20 : 2;
+            // Min/max distance: BTC $150-$3000, ETH $20-$150, SOL $2-$10
+            const minDistance = coinPrice > 10000 ? 150 : coinPrice > 500 ? 20 : 2;
             const maxDistance = coinPrice > 10000 ? 3000 : coinPrice > 500 ? 150 : 10;
             if (distance < minDistance) {
               console.log(`  ⚡ SKIP: ${m.ticker} too close ($${distance.toFixed(0)} < $${minDistance} min)`);
@@ -1734,13 +1734,13 @@ async function pollKalshi(): Promise<void> {
           }
         }
 
-        // YES price sweet spot filter — best risk/reward at 10c-50c
+        // YES price sweet spot filter — best risk/reward at 10c-55c
         // YES < 10c → NO costs 90c+ (minimal profit) → SKIP
-        // YES > 50c → threshold too likely to hit → risky for NO → SKIP
-        // YES 10c-50c → NO pays 50c-90c → SWEET SPOT → ANALYZE ✅
+        // YES > 55c → threshold too likely to hit → risky for NO → SKIP
+        // YES 10c-55c → NO pays 45c-90c → SWEET SPOT → ANALYZE ✅
         const yesCents = Math.round(yesPrice * 100);
-        if (yesCents < 10 || yesCents > 50) {
-          console.log(`  💰 SKIP: ${m.ticker} YES price ${yesCents}c outside 10c-50c sweet spot`);
+        if (yesCents < 10 || yesCents > 55) {
+          console.log(`  💰 SKIP: ${m.ticker} YES price ${yesCents}c outside 10c-55c sweet spot`);
           totalFiltered++;
           continue;
         }
