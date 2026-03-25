@@ -83,10 +83,23 @@ export async function GET() {
     let losses = 0;
     let netPnlCents = 0;
 
-    const trades = settled.map((p) => {
+    // Filter out zero-exposure settled positions (settled but not truly traded)
+    const realSettled = settled.filter((p) => {
+      const pnl = Number(p.realized_pnl ?? 0);
+      const totalTraded = Number(p.total_traded ?? 0);
+      return pnl !== 0 || totalTraded > 0;
+    });
+
+    const trades = realSettled.map((p) => {
       const pnl = Number(p.realized_pnl ?? 0); // cents
       netPnlCents += pnl;
-      if (pnl > 0) wins++;
+
+      // Determine win/loss from realized_pnl:
+      //   positive pnl = WIN (we made money)
+      //   negative pnl = LOSS (we lost money)
+      //   zero pnl with trades = breakeven (count as win — we got our money back)
+      const isWin = pnl >= 0;
+      if (isWin) wins++;
       else losses++;
 
       const positionFp = parseFloat(String(p.position_fp ?? "0"));
@@ -98,7 +111,7 @@ export async function GET() {
         ticker,
         title,
         side,
-        result: pnl > 0 ? "WIN" : "LOSS",
+        result: isWin ? "WIN" : "LOSS",
         pnl: Math.round(pnl) / 100, // cents → dollars
       };
     });

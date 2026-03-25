@@ -249,6 +249,40 @@ function timeAgo(iso: string): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+/**
+ * Parse a Kalshi crypto ticker into a compact strike label.
+ * "KXBTCD-26MAR2513-T71199.99" → "BTC $71,200 · 1pm ET"
+ */
+function parseCryptoTicker(ticker: string | null): string | null {
+  if (!ticker) return null;
+  const coinMap: Record<string, string> = {
+    KXBTCD: "BTC", KXETHD: "ETH", KXSOLD: "SOL",
+    KXXRPD: "XRP", KXDOGED: "DOGE", KXBNBD: "BNB",
+  };
+  // 15-min: KXBTC15M-26MAR25T1300-T71500
+  const m15 = ticker.match(/^KXBTC15M-\d{2}\w{3}\d{2}T(\d{2})(\d{2})-T([\d.]+)$/i);
+  if (m15) {
+    const [, hr, mn, threshold] = m15;
+    const t = Math.round(parseFloat(threshold));
+    const ts = t >= 1000 ? `$${t.toLocaleString()}` : `$${t}`;
+    const h = parseInt(hr, 10);
+    const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
+    return `BTC 15m ${ts} · ${h12}:${mn}${h >= 12 ? "pm" : "am"} ET`;
+  }
+  // Daily: KXBTCD-26MAR2513-T71199.99
+  const mD = ticker.match(/^(KX\w+?D)-(\d{2})\w{3}\d{2}(\d{2})-T([\d.]+)$/i);
+  if (mD) {
+    const [, series, , hourStr, threshold] = mD;
+    const coin = coinMap[series.toUpperCase()] ?? series;
+    const t = Math.round(parseFloat(threshold));
+    const ts = t >= 1000 ? `$${t.toLocaleString()}` : `$${t}`;
+    const h = parseInt(hourStr, 10);
+    const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
+    return `${coin} ${ts} · ${h12}${h >= 12 ? "pm" : "am"} ET`;
+  }
+  return null;
+}
+
 function pnlColor(n: number | null): string {
   if (n === null) return css.textSecondary;
   if (n > 0) return "#4ade80";
@@ -592,7 +626,7 @@ function MarketRowItem({
           whiteSpace: "nowrap",
         }}
       >
-        {market.title?.slice(0, 55) ?? "Untitled"}
+        {parseCryptoTicker(market.kalshi_ticker ?? market.polymarket_id) ?? market.title?.slice(0, 55) ?? "Untitled"}
       </p>
 
       {/* Price */}
@@ -623,7 +657,7 @@ function MarketRowItem({
             textAlign: "center",
           }}
         >
-          {vote}
+          {vote === "NO_TRADE" ? "SKIP" : vote}
         </span>
       ) : (
         <span
@@ -632,13 +666,13 @@ function MarketRowItem({
             fontWeight: 500,
             padding: "2px 8px",
             borderRadius: 4,
-            color: css.textSecondary,
-            background: "rgba(100,116,139,0.1)",
+            color: "#fbbf24",
+            background: "rgba(251,191,36,0.1)",
             width: 72,
             textAlign: "center",
           }}
         >
-          pending
+          LIVE
         </span>
       )}
 

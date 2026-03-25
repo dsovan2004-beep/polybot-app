@@ -62,14 +62,23 @@ export async function GET() {
     ensureFeedRunning();
 
     // Fetch from Supabase regardless of WS state
-    const [markets, whales, signals] = await Promise.all([
-      getRecentMarkets(10),
+    // Fetch more markets (200) then filter to crypto-only on server side
+    // Fetch more signals (200) to increase chance of matching crypto markets
+    const [allMarkets, whales, signals] = await Promise.all([
+      getRecentMarkets(200),
       getWhaleActivity(10),
-      getRecentSignals(50),
+      getRecentSignals(200),
     ]);
 
+    // Filter to crypto-only markets (tickers starting with KX crypto prefixes)
+    const cryptoPrefixes = ["KXBTC", "KXETH", "KXSOL", "KXXRP", "KXDOGE", "KXBNB", "KXHYPE"];
+    const markets = allMarkets.filter((m) => {
+      const ticker = (m.kalshi_ticker ?? m.polymarket_id ?? "").toUpperCase();
+      return cryptoPrefixes.some((prefix) => ticker.startsWith(prefix));
+    });
+
     const response: MarketsResponse = {
-      markets,
+      markets: markets.slice(0, 30), // cap at 30 crypto markets
       whales,
       signals,
       connected: isConnected(),

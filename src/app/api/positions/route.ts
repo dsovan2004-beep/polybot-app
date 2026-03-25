@@ -9,6 +9,50 @@ import { kalshiFetch } from "@/lib/kalshi";
 
 export const runtime = "edge";
 
+/**
+ * Parse a Kalshi ticker into a compact strike label.
+ * e.g. "KXBTCD-26MAR2513-T71199.99" → "BTC $71,200 · 1pm ET"
+ * e.g. "KXBTC15M-26MAR25T1300-T71500" → "BTC 15m $71,500 · 1:00pm ET"
+ */
+function parseTickerLabel(ticker: string): string | null {
+  const coinMap: Record<string, string> = {
+    KXBTCD: "BTC", KXETHD: "ETH", KXSOLD: "SOL",
+    KXXRPD: "XRP", KXDOGED: "DOGE", KXBNBD: "BNB",
+  };
+
+  // 15-min BTC: KXBTC15M-26MAR25T1300-T71500
+  const m15 = ticker.match(
+    /^KXBTC15M-\d{2}\w{3}\d{2}T(\d{2})(\d{2})-T([\d.]+)$/i
+  );
+  if (m15) {
+    const [, hr, mn, threshold] = m15;
+    const t = parseFloat(threshold);
+    const ts = t >= 1000 ? `$${Math.round(t).toLocaleString()}` : `$${Math.round(t)}`;
+    const h = parseInt(hr, 10);
+    const ampm = h >= 12 ? "pm" : "am";
+    const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
+    return `BTC 15m ${ts} · ${h12}:${mn}${ampm} ET`;
+  }
+
+  // Daily crypto: KXBTCD-26MAR2513-T71199.99
+  // The date segment is DDMMMYYHR where last 2 digits = hour ET
+  const mD = ticker.match(
+    /^(KX\w+?D)-(\d{2})\w{3}\d{2}(\d{2})-T([\d.]+)$/i
+  );
+  if (mD) {
+    const [, series, , hourStr, threshold] = mD;
+    const coin = coinMap[series.toUpperCase()] ?? series;
+    const t = parseFloat(threshold);
+    const ts = t >= 1000 ? `$${Math.round(t).toLocaleString()}` : `$${Math.round(t)}`;
+    const h = parseInt(hourStr, 10);
+    const ampm = h >= 12 ? "pm" : "am";
+    const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
+    return `${coin} ${ts} · ${h12}${ampm} ET`;
+  }
+
+  return null;
+}
+
 export async function GET() {
   try {
     const apiKey = process.env.KALSHI_API_KEY;
@@ -71,8 +115,9 @@ export async function GET() {
             ? Math.round((1 - avgCost) * 100)
             : Math.round(avgCost * 100);
 
-        // Fetch market details for current price + title + close time
-        let title = ticker;
+        // Fetch market details for current price + close time
+        // Use parsed ticker label (compact) instead of full Kalshi title
+        let title = parseTickerLabel(ticker) ?? ticker;
         let nowYesPct = 50;
         let closeTime = "";
 
@@ -84,7 +129,10 @@ export async function GET() {
             privateKey: privateKey!,
           });
           const mkt = (mktResp.market ?? mktResp) as Record<string, unknown>;
-          title = String(mkt.title ?? mkt.subtitle ?? ticker);
+          // Only use Kalshi title as fallback if ticker couldn't be parsed
+          if (!parseTickerLabel(ticker)) {
+            title = String(mkt.title ?? mkt.subtitle ?? ticker);
+          }
 
           // Get current YES ask price
           const yesAskDollars = mkt.yes_ask_dollars as number | undefined;
