@@ -133,6 +133,65 @@ async function fetchBalance(): Promise<BalanceData> {
   return json.data;
 }
 
+// ---------------------------------------------------------------------------
+// Positions API (Fix #8)
+// ---------------------------------------------------------------------------
+
+interface PositionItem {
+  ticker: string;
+  title: string;
+  side: string;
+  contracts: number;
+  avgPrice: number;
+  boughtPct: number;
+  nowYesPct: number;
+  marketValue: number;
+  payoutIfWin: number;
+  verdict: string;
+  verdictColor: string;
+  closeTime: string;
+}
+
+interface PositionsApiData {
+  portfolio: { portfolioValue: number; cash: number; positionsValue: number };
+  positions: PositionItem[];
+}
+
+async function fetchPositions(): Promise<PositionsApiData> {
+  const res = await fetch("/api/positions");
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error ?? "Failed to load positions");
+  return json.data;
+}
+
+// ---------------------------------------------------------------------------
+// Stats API (Fix #8)
+// ---------------------------------------------------------------------------
+
+interface RecentTrade {
+  ticker: string;
+  title: string;
+  side: string;
+  result: string;
+  pnl: number;
+}
+
+interface StatsApiData {
+  totalTrades: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  netPnl: number;
+  recentTrades: RecentTrade[];
+}
+
+async function fetchStats(): Promise<StatsApiData> {
+  const res = await fetch("/api/stats");
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error ?? "Failed to load stats");
+  return json.data;
+}
+
 async function executeTrade(
   signal: { id: string; market_id: string; consensus: string; confidence: number; market_price: number; strategy: string },
   marketTicker: string,
@@ -704,6 +763,8 @@ export default function BotDashboard() {
     return saved === null ? true : saved === "true";
   });
   const [balanceData, setBalanceData] = useState<BalanceData | null>(null);
+  const [posData, setPosData] = useState<PositionsApiData | null>(null);
+  const [statsData, setStatsData] = useState<StatsApiData | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [marketFilter, setMarketFilter] = useState<"all" | "exec" | "live" | "no_trade">("all");
 
@@ -816,6 +877,26 @@ export default function BotDashboard() {
     }
   }, []);
 
+  // Fetch enriched positions (Fix #8)
+  const loadPositions = useCallback(async () => {
+    try {
+      const data = await fetchPositions();
+      setPosData(data);
+    } catch {
+      // Silent fail
+    }
+  }, []);
+
+  // Fetch real stats from Kalshi settlements (Fix #8)
+  const loadStats = useCallback(async () => {
+    try {
+      const data = await fetchStats();
+      setStatsData(data);
+    } catch {
+      // Silent fail
+    }
+  }, []);
+
   // Auto-clear toast after 4 seconds
   useEffect(() => {
     if (!toast) return;
@@ -828,17 +909,23 @@ export default function BotDashboard() {
     loadBtc();
     checkKillSwitch();
     loadBalance();
+    loadPositions();
+    loadStats();
     const dashInterval = setInterval(loadMarkets, 30_000);
     const btcInterval = setInterval(loadBtc, 5_000);
     const killInterval = setInterval(checkKillSwitch, 60_000);
     const balInterval = setInterval(loadBalance, 60_000);
+    const posInterval = setInterval(loadPositions, 30_000);
+    const statsInterval = setInterval(loadStats, 60_000);
     return () => {
       clearInterval(dashInterval);
       clearInterval(btcInterval);
       clearInterval(killInterval);
       clearInterval(balInterval);
+      clearInterval(posInterval);
+      clearInterval(statsInterval);
     };
-  }, [loadMarkets, loadBtc, checkKillSwitch, loadBalance]);
+  }, [loadMarkets, loadBtc, checkKillSwitch, loadBalance, loadPositions, loadStats]);
 
   // Execute trade handler
   const handleExecute = useCallback(
@@ -1170,118 +1257,136 @@ export default function BotDashboard() {
           GUARDRAILS: 8 active | Min conf: 67% | Min gap: 10% | Price: 2¢–98¢ | Vol: 500+ | Kill: −20% | No sports | No same-day expiry
         </div>
 
-        {/* ── 4 STAT CARDS ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
+        {/* ── SECTION 1: PORTFOLIO HEADER ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 16 }}>
           <Card>
             <p style={{ fontSize: 11, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Total P&L
+              Portfolio Value
             </p>
-            <p style={{ fontSize: 24, fontWeight: 700, color: pnlColor(balanceData?.totalPnl ?? 0), marginTop: 4 }}>
-              {fmt$(balanceData?.totalPnl ?? 0)}
+            <p style={{ fontSize: 28, fontWeight: 700, color: css.textPrimary, marginTop: 4, fontFamily: "monospace" }}>
+              {fmt$(posData?.portfolio.portfolioValue ?? balanceData?.totalValue ?? 0)}
             </p>
-            {/* P&L sparkline */}
-            {(() => {
-              const pts = balanceData?.pnlHistory ?? [];
-              if (pts.length < 2) return null;
-              const min = Math.min(...pts);
-              const max = Math.max(...pts);
-              const range = max - min || 1;
-              const w = 140;
-              const h = 36;
-              const pad = 2;
-              const points = pts
-                .map((v, i) => {
-                  const x = pad + (i / (pts.length - 1)) * (w - pad * 2);
-                  const y = pad + (1 - (v - min) / range) * (h - pad * 2);
-                  return `${x.toFixed(1)},${y.toFixed(1)}`;
-                })
-                .join(" ");
-              const trending = pts[pts.length - 1] > pts[0] ? "#4ade80" : pts[pts.length - 1] < pts[0] ? "#f87171" : "#94a3b8";
-              return (
-                <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ marginTop: 6, opacity: 0.7 }}>
-                  <polyline
-                    points={points}
-                    fill="none"
-                    stroke={trending}
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              );
-            })()}
           </Card>
-          <StatCard
-            label="Win Rate"
-            value={balanceData?.tradesCount ? `${fmtPct(balanceData.winRate)} (${balanceData.wins}/${balanceData.tradesCount})` : "Building history..."}
-          />
-          <StatCard
-            label="Signals Today"
-            value={String(signals.length)}
-          />
           <Card>
             <p style={{ fontSize: 11, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              USDC Rebates
-              <span title="Earned from providing liquidity on executed trades" style={{ fontSize: 10, cursor: "help", marginLeft: 4 }}>ⓘ</span>
+              Cash Balance
             </p>
-            <p style={{ fontSize: 24, fontWeight: 700, color: css.textPrimary, marginTop: 4 }}>
-              {fmt$(0)}
+            <p style={{ fontSize: 28, fontWeight: 700, color: "#4ade80", marginTop: 4, fontFamily: "monospace" }}>
+              {fmt$(posData?.portfolio.cash ?? balanceData?.kalshi ?? 0)}
+            </p>
+          </Card>
+          <Card>
+            <p style={{ fontSize: 11, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Positions Value
+            </p>
+            <p style={{ fontSize: 28, fontWeight: 700, color: css.indigo, marginTop: 4, fontFamily: "monospace" }}>
+              {fmt$(posData?.portfolio.positionsValue ?? 0)}
             </p>
           </Card>
         </div>
 
-        {/* ── OPEN POSITIONS ── */}
-        {balanceData && balanceData.positions && (() => {
-          const activePositions = balanceData.positions.filter(p => Math.abs(p.market_exposure) > 0 || p.resting_orders_count > 0);
-          if (activePositions.length === 0) return null;
-          return (
+        {/* ── SECTION 3: STATS BAR (from Kalshi settlements) ── */}
+        {statsData && statsData.totalTrades > 0 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 32,
+              padding: "10px 20px",
+              marginBottom: 16,
+              borderRadius: 8,
+              border: `0.5px solid ${css.border}`,
+              background: "rgba(99,102,241,0.06)",
+              fontFamily: "monospace",
+              fontSize: 13,
+            }}
+          >
+            <span style={{ color: css.textSecondary }}>
+              Trades: <strong style={{ color: css.textPrimary }}>{statsData.totalTrades}</strong>
+            </span>
+            <span style={{ color: css.textSecondary }}>
+              Win Rate: <strong style={{ color: statsData.winRate >= 0.7 ? "#4ade80" : statsData.winRate >= 0.5 ? "#fbbf24" : "#f87171" }}>
+                {(statsData.winRate * 100).toFixed(1)}%
+              </strong>
+              <span style={{ color: "#94a3b8", fontSize: 11 }}> ({statsData.wins}W / {statsData.losses}L)</span>
+            </span>
+            <span style={{ color: css.textSecondary }}>
+              Net P&L: <strong style={{ color: pnlColor(statsData.netPnl) }}>{fmt$(statsData.netPnl)}</strong>
+            </span>
+          </div>
+        )}
+
+        {/* ── SECTION 2: OPEN POSITIONS WITH VERDICTS ── */}
+        {posData && posData.positions.length > 0 && (
           <div style={{ marginBottom: 24 }}>
             <p style={{ fontSize: 12, fontWeight: 600, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-              Open Positions ({activePositions.length})
+              Open Positions ({posData.positions.length})
             </p>
             <Card>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
                   <tr style={{ borderBottom: `1px solid ${css.border}` }}>
-                    {["Market", "Side", "Exposure", "Resting Orders", "Total Traded"].map((h) => (
-                      <th key={h} style={{ textAlign: "left", padding: "8px 10px", color: css.textSecondary, fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    {["Market", "Side", "Bought", "Now", "", "Contracts", "Value", "Payout", "Verdict"].map((h) => (
+                      <th key={h} style={{ textAlign: "left", padding: "8px 8px", color: css.textSecondary, fontWeight: 500, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>
                         {h}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {activePositions.map((pos) => {
-                    const title = pos.title || pos.ticker;
-                    const side = pos.market_exposure >= 0 ? "YES" : "NO";
-                    const exposureAbs = Math.abs(pos.market_exposure) / 100;
-                    const exposureColor = pos.market_exposure >= 0 ? "#4ade80" : "#f87171";
+                  {posData.positions.map((pos) => {
+                    // Arrow: for NO, YES going down is good (▼ green), up is bad (▲ red)
+                    const yesMovedDown = pos.nowYesPct < pos.boughtPct;
+                    const arrow = yesMovedDown ? "▼" : "▲";
+                    const arrowColor = pos.side === "NO"
+                      ? (yesMovedDown ? "#4ade80" : "#f87171")
+                      : (yesMovedDown ? "#f87171" : "#4ade80");
 
                     return (
                       <tr key={pos.ticker} style={{ borderBottom: `1px solid ${css.border}` }}>
-                        <td style={{ padding: "10px", color: css.textPrimary, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {title}
+                        <td style={{ padding: "8px", color: css.textPrimary, maxWidth: 250, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>
+                          {pos.title}
+                          {pos.closeTime && (
+                            <span style={{ display: "block", fontSize: 10, color: css.textSecondary, marginTop: 1 }}>
+                              {new Date(pos.closeTime).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" })}
+                            </span>
+                          )}
                         </td>
-                        <td style={{ padding: "10px" }}>
+                        <td style={{ padding: "8px" }}>
                           <span style={{
-                            fontSize: 11,
+                            fontSize: 10,
                             fontWeight: 700,
-                            padding: "2px 8px",
+                            padding: "2px 6px",
                             borderRadius: 4,
-                            background: side === "YES" ? "rgba(74,222,128,0.15)" : "rgba(248,113,113,0.15)",
-                            color: side === "YES" ? "#4ade80" : "#f87171",
+                            background: pos.side === "YES" ? "rgba(74,222,128,0.15)" : "rgba(248,113,113,0.15)",
+                            color: pos.side === "YES" ? "#4ade80" : "#f87171",
                           }}>
-                            {side}
+                            {pos.side}
                           </span>
                         </td>
-                        <td style={{ padding: "10px", color: exposureColor, fontFamily: "monospace", fontWeight: 600 }}>
-                          ${exposureAbs.toFixed(2)}
+                        <td style={{ padding: "8px", fontFamily: "monospace", fontSize: 12, color: css.textSecondary }}>
+                          {pos.boughtPct}%
                         </td>
-                        <td style={{ padding: "10px", color: css.textSecondary, fontFamily: "monospace" }}>
-                          {pos.resting_orders_count}
+                        <td style={{ padding: "8px", fontFamily: "monospace", fontSize: 12, fontWeight: 600, color: css.textPrimary }}>
+                          {pos.nowYesPct}%
                         </td>
-                        <td style={{ padding: "10px", color: css.textPrimary, fontFamily: "monospace" }}>
-                          {pos.total_traded}
+                        <td style={{ padding: "4px", fontSize: 14, color: arrowColor, fontWeight: 700 }}>
+                          {arrow}
+                        </td>
+                        <td style={{ padding: "8px", fontFamily: "monospace", fontSize: 12, color: css.textPrimary }}>
+                          {pos.contracts}
+                        </td>
+                        <td style={{ padding: "8px", fontFamily: "monospace", fontSize: 12, color: css.textPrimary }}>
+                          {fmt$(pos.marketValue)}
+                        </td>
+                        <td style={{ padding: "8px", fontFamily: "monospace", fontSize: 12, color: "#4ade80" }}>
+                          {fmt$(pos.payoutIfWin)}
+                        </td>
+                        <td style={{ padding: "8px" }}>
+                          <span style={{ fontSize: 11, fontWeight: 600, color: pos.verdictColor }}>
+                            {pos.verdict}
+                          </span>
                         </td>
                       </tr>
                     );
@@ -1290,8 +1395,7 @@ export default function BotDashboard() {
               </table>
             </Card>
           </div>
-          );
-        })()}
+        )}
 
         {/* ── MAIN 2-COLUMN GRID ── */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
@@ -1421,6 +1525,64 @@ export default function BotDashboard() {
             </Card>
           </div>
         </div>
+
+        {/* ── SECTION 4: RECENT TRADES LOG ── */}
+        {statsData && statsData.recentTrades.length > 0 && (
+          <div style={{ marginBottom: 24 }}>
+            <p style={{ fontSize: 12, fontWeight: 600, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+              Recent Trades ({statsData.recentTrades.length})
+            </p>
+            <Card>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ borderBottom: `1px solid ${css.border}` }}>
+                    {["Market", "Side", "Result", "P&L"].map((h) => (
+                      <th key={h} style={{ textAlign: "left", padding: "8px 10px", color: css.textSecondary, fontWeight: 500, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {statsData.recentTrades.map((trade, idx) => (
+                    <tr key={`${trade.ticker}-${idx}`} style={{ borderBottom: `1px solid ${css.border}` }}>
+                      <td style={{ padding: "8px 10px", color: css.textPrimary, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>
+                        {trade.title}
+                      </td>
+                      <td style={{ padding: "8px 10px" }}>
+                        <span style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          padding: "2px 6px",
+                          borderRadius: 4,
+                          background: trade.side === "YES" ? "rgba(74,222,128,0.15)" : "rgba(248,113,113,0.15)",
+                          color: trade.side === "YES" ? "#4ade80" : "#f87171",
+                        }}>
+                          {trade.side}
+                        </span>
+                      </td>
+                      <td style={{ padding: "8px 10px" }}>
+                        <span style={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          padding: "2px 8px",
+                          borderRadius: 4,
+                          background: trade.result === "WIN" ? "rgba(74,222,128,0.15)" : "rgba(248,113,113,0.15)",
+                          color: trade.result === "WIN" ? "#4ade80" : "#f87171",
+                        }}>
+                          {trade.result}
+                        </span>
+                      </td>
+                      <td style={{ padding: "8px 10px", fontFamily: "monospace", fontWeight: 600, color: pnlColor(trade.pnl) }}>
+                        {trade.pnl > 0 ? "+" : ""}{fmt$(trade.pnl)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+          </div>
+        )}
 
         {/* ── SIGNAL HISTORY ── */}
         {signals.length > 0 && (

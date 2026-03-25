@@ -145,7 +145,7 @@ async function signRequest(
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-interface KalshiRequestInit {
+export interface KalshiRequestInit {
   method: string;
   /** Relative path, e.g. "/portfolio/balance" — prefix added automatically */
   path: string;
@@ -154,7 +154,7 @@ interface KalshiRequestInit {
   privateKey: string;
 }
 
-async function kalshiFetch<T>(init: KalshiRequestInit): Promise<T> {
+export async function kalshiFetch<T>(init: KalshiRequestInit): Promise<T> {
   const timestampMs = String(Date.now());
   // Normalize literal \n from env vars before importing
   const normalizedKey = init.privateKey.replace(/\\n/g, "\n");
