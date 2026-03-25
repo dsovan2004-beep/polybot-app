@@ -106,15 +106,27 @@
 - **DOGE/BNB fail-open:** optional coins default to $0 if Coinbase unavailable
 - Files modified: feed.ts only
 
-## Phase 11 — Dashboard Intelligence: QUEUED 📋
-- Fix #8: Trades log dashboard tab (full trade history with P&L per trade)
-- Fix #9: Win rate by strategy (breakdown showing which strategies perform best)
-- Fix #10: Position sizing by confidence (scale trade size based on confidence level)
+## Phase 11 — Trading Intelligence: COMPLETE ✅
+- **Dynamic position sizing LIVE:** 2% of balance × confidence multiplier (55%→100%), multi-contract orders
+- **Constants:** MIN_TRADE=$0.50, MAX_TRADE=$5.00, dynamic MAX_POSITIONS (25% of balance / trade size, floor 8, ceiling 20)
+- **Smart memory LIVE:** Kalshi settlements API (up to 200 trades) → 14 lines of context per cycle
+  - Overall WR, per-coin WR, BTC threshold bands, momentum (last 10), biggest wins/losses, recent losses
+  - Fallback to Supabase trades table if Kalshi fetch fails
+- **Distance + YES ceiling tuned:** MIN_BTC_DISTANCE $250→$150, MAX_YES_PRICE 50¢→55¢
+- **Performance:** ~$95-97 portfolio, 48+ settled trades, 75% WR, -$3.04 net P&L
+- Files modified: feed.ts only
+
+## Phase 12 — Strategy Optimization: BACKLOG 📋
+- Fix #39: Price sweet spot filter — only trade NO at 70-82¢ (pending 100+ trades validation)
+- Fix #37: Ban YES trades entirely (0% historical WR)
+- Add HYPE coin (KXHYPED series)
+- Fix #8: Trades log dashboard tab
+- Fix #9: Win rate by strategy
 
 ### Future Backlog (unscheduled)
 - MACD(6/26/5) + Binance liquidation combined strategy
 - RBI framework: Research → Backtest → Incubate → Scale
-- Validate 30 trades win rate → scale to $100
+- Validate 100+ trades → scale capital
 - Build PolyBot SaaS subscription tier
 - Kalshi US app migration eval
 
@@ -145,9 +157,9 @@
 | AI | ✅ Live | Claude Haiku (ANTHROPIC_API_KEY) — 20x cheaper |
 | Kalshi | ✅ Live | RSA-PSS signing, CFTC regulated exchange |
 | Telegram | ✅ Live | @Polybotsalerts_bot — signal + trade + kill alerts |
-| Data Feeds | ✅ Live | Kalshi REST polling every 30s, ~2,016 markets (1,115 general + 901 crypto) |
+| Data Feeds | ✅ Live | Kalshi REST polling every 30s, ~2,016 markets (1,115 general + ~980 crypto) |
 | Coinbase | ✅ Live | BTC/ETH/SOL/XRP/DOGE/BNB spot + 4 BTC trend timeframes (5m/15m/1h/24h) |
-| Feed | ✅ Running | Mac terminal (feed.ts with self-test + Telegram + pump detector) |
-| Signals | ✅ Flowing | Claude analyzing 7 crypto series with live prices |
+| Feed | ✅ Running | Mac terminal (feed.ts with self-test + Telegram + pump detector + smart memory) |
+| Signals | ✅ Flowing | Claude analyzing 7 crypto series with live prices + 14-line memory context |
 | First Trade | ✅ Placed | March 20, 2026 4:24 PM PT |
-| Balance | ✅ Tracked | $21.66 portfolio (started $21.78) |
+| Balance | ✅ Tracked | ~$95-97 portfolio (deposited $100, 48+ trades, 75% WR) |

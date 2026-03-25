@@ -57,6 +57,15 @@ No new tables or columns. Changes to feed.ts data flow only:
 - DOGE/BNB are fail-open: if Coinbase fetch fails, they default to 0 (required coins still must succeed)
 - Orphaned position warnings silenced (checkAndSellPositions no longer logs ⚠️ for missing Supabase records)
 
+## Sprint 11 Usage Notes (No Schema Changes)
+No new tables or columns. Changes to feed.ts logic only:
+- **Dynamic position sizing (Fix #10):** calculateTradeSize(balance, confidence) computes 2% of balance × confidence multiplier; calculateMaxPositions(balance, tradeSize) computes 25% of balance / trade size. autoExecTrade() now fetches balance first, then derives dynamic trade size and max positions.
+- **Multi-contract orders:** count = Math.floor(dynamicTradeSize / pricePerContract), entry_cost now reflects total cost (count × price)
+- **Smart memory rewrite (Fix #38):** buildMemoryContext() now has two data sources:
+  - **PRIMARY:** Kalshi settlements API (`GET /portfolio/positions?settlement_status=settled&limit=200`) — classifies by coin from ticker prefix, parses threshold from ticker regex, calculates overall WR, per-coin WR, BTC threshold bands, momentum (last 10), biggest wins/losses, recent losses using `realized_pnl` field
+  - **FALLBACK:** Supabase trades table (if Kalshi fetch fails or returns < 3 results) — simplified version with coin stats and recent losses
+- **Distance/price tuning (Fix #39b):** MIN_BTC_DISTANCE $250→$150, MAX_YES_PRICE 50¢→55¢ (constants only, no schema impact)
+
 ## Feed Script Data Flow (feed.ts) — Sprint 10 Updated
 - Polls Kalshi REST API every 30 seconds: 3x GET /events + 7x GET /markets?series_ticker= (KXBTCD, KXBTC15M, KXETHD, KXSOLD, KXXRPD, KXDOGED, KXBNBD)
 - Fetches ~2,016 markets total (~1,115 general + ~901 crypto)
@@ -64,8 +73,8 @@ No new tables or columns. Changes to feed.ts data flow only:
 - **Crypto-only hard block:** non-crypto markets never reach Claude (Fix #31)
 - **5-layer crypto filter pipeline:**
   1. Volume: crypto ≥ 1,000
-  2. Distance: BTC $250–$3,000, ETH $20–$150, SOL $2–$10, XRP/DOGE $2–$10, BNB $20–$150 from current price
-  3. YES price: 10c–50c sweet spot only
+  2. Distance: BTC $150–$3,000, ETH $20–$150, SOL $2–$10, XRP/DOGE $2–$10, BNB $20–$150 from current price
+  3. YES price: 10c–55c sweet spot only
   4. Direction: threshold must be ABOVE current price
   5. Claude: 67% minimum confidence with live prices injected
 - **Safety guards (before filters):**
@@ -73,7 +82,7 @@ No new tables or columns. Changes to feed.ts data flow only:
   - 4-signal pump detector: 5m >0.5%, 15m >0.8%, 1h >1.5%, 24h >5%
 - Saves qualifying markets to markets table (upsert on polymarket_id = kalshi_ticker)
 - Claude analyzes crypto-only inline → saves signals to signals table
-- buildMemoryContext() queries Kalshi positions + last 50 closed trades for pattern learning
+- buildMemoryContext() queries Kalshi positions + Kalshi settlements API (up to 200 trades) for 14-line pattern analysis (fallback: Supabase trades)
 - autoExecTrade() places live Kalshi orders → saves trades with 5 context fields
 - checkAndSellPositions() runs every cycle → auto-sells at +25% or -40%, writes outcome
 - getDailyPnL() blocks new trades at +$3 profit or -$5 loss daily cap
