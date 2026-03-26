@@ -1661,12 +1661,12 @@ async function pollKalshi(): Promise<void> {
 
       // Crypto proximity + volume filters — avoid high-risk trades near current price
       if (isCryptoShortTerm && cryptoPrices) {
-        // GUARD 1 — Time-of-day filter: no new crypto trades deep overnight (2am-6am ET / 11pm-3am PT)
+        // GUARD 1 — Kalshi maintenance window: Thu 3-5am ET only (Kalshi is 24/7 since Aug 2025)
         const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
         const hourET = nowET.getHours();
-        const isOvernightET = hourET >= 2 && hourET < 6;
-        if (isOvernightET) {
-          console.log(`  💤 SKIP: ${m.ticker} overnight trading blocked (${hourET}am ET)`);
+        const dayET = nowET.getDay(); // 0=Sun, 4=Thu
+        if (dayET === 4 && hourET >= 3 && hourET < 5) {
+          console.log(`  ⏰ SKIP: Kalshi maintenance window (Thu 3-5am ET)`);
           totalFiltered++;
           continue;
         }
