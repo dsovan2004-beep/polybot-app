@@ -1017,8 +1017,13 @@ What is your analysis?`;
 
     // Auto-exec + Telegram alert for actionable signals
     if (finalVote !== "NO_TRADE" && confidence >= confThreshold && priceGap >= MIN_PRICE_GAP) {
-      // Auto-execute the trade
-      const side: "yes" | "no" = finalVote === "YES" ? "yes" : "no";
+      // Fix #37: Ban YES trades entirely — 0% historical win rate
+      if (finalVote === "YES") {
+        console.log(`  🚫 SKIP: YES trade blocked (Fix #37 — 0% historical win rate)`);
+        return;
+      }
+      // Auto-execute the trade (NO trades only)
+      const side: "yes" | "no" = "no";
       await autoExecTrade(kalshiTicker, side, marketId, strategy, confidence, yesPrice, isCrypto, cryptoPrices);
 
       const modeTag = PAPER_MODE ? "📝 PAPER" : "🤖 AUTO-EXECUTED";
