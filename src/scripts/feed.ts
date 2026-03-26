@@ -655,9 +655,6 @@ async function autoExecTrade(
     } else if (tickerLow.startsWith("kxhyped")) {
       tradeCoin = "HYPE";
       tradeCoinPrice = cryptoPrices?.hype ?? 0;
-    } else if (tickerLow.startsWith("kxwifd")) {
-      tradeCoin = "WIF";
-      tradeCoinPrice = cryptoPrices?.wif ?? 0;
     }
     const threshMatch = kalshiTicker.match(/-T([\d.]+)$/);
     const tradeThreshold = threshMatch ? parseFloat(threshMatch[1]) : 0;
@@ -930,9 +927,9 @@ Volume: $${volume.toLocaleString()}${btcPrice ? `\nCurrent BTC price: $${btcPric
       (() => {
         if (!cryptoPrices) return "";
         const t = kalshiTicker.toLowerCase();
-        const isCrypto = t.includes("updown") || t.startsWith("kxbtc15m") || t.startsWith("kxbtcd") || t.startsWith("kxethd") || t.startsWith("kxsold") || t.startsWith("kxxrpd") || t.startsWith("kxdoged") || t.startsWith("kxbnbd") || t.startsWith("kxhyped") || t.startsWith("kxwifd");
+        const isCrypto = t.includes("updown") || t.startsWith("kxbtc15m") || t.startsWith("kxbtcd") || t.startsWith("kxethd") || t.startsWith("kxsold") || t.startsWith("kxxrpd") || t.startsWith("kxdoged") || t.startsWith("kxbnbd") || t.startsWith("kxhyped");
         if (!isCrypto) return "";
-        return `\nLIVE MARKET DATA (Coinbase): BTC=$${cryptoPrices.btc.toLocaleString()} (${cryptoPrices.btcTrend5m >= 0 ? "+" : ""}${cryptoPrices.btcTrend5m.toFixed(2)}% 5min). ETH=$${cryptoPrices.eth.toLocaleString()}. SOL=$${cryptoPrices.sol.toFixed(0)}. XRP=$${cryptoPrices.xrp.toFixed(2)}. DOGE=$${cryptoPrices.doge.toFixed(4)}. BNB=$${cryptoPrices.bnb.toFixed(0)}. HYPE=$${cryptoPrices.hype.toFixed(2)}. WIF=$${cryptoPrices.wif.toFixed(2)}. Use the 5-min trend to assess UP or DOWN direction for the next 15 minutes. Rising momentum = lean UP. Falling momentum = lean DOWN.`;
+        return `\nLIVE MARKET DATA (Coinbase): BTC=$${cryptoPrices.btc.toLocaleString()} (${cryptoPrices.btcTrend5m >= 0 ? "+" : ""}${cryptoPrices.btcTrend5m.toFixed(2)}% 5min). ETH=$${cryptoPrices.eth.toLocaleString()}. SOL=$${cryptoPrices.sol.toFixed(0)}. XRP=$${cryptoPrices.xrp.toFixed(2)}. DOGE=$${cryptoPrices.doge.toFixed(4)}. BNB=$${cryptoPrices.bnb.toFixed(0)}. HYPE=$${cryptoPrices.hype.toFixed(2)}. Use the 5-min trend to assess UP or DOWN direction for the next 15 minutes. Rising momentum = lean UP. Falling momentum = lean DOWN.`;
       })()
     }
 
@@ -1120,7 +1117,6 @@ async function buildMemoryContext(): Promise<string> {
           else if (t.startsWith("kxdoged")) coin = "DOGE";
           else if (t.startsWith("kxbnbd")) coin = "BNB";
           else if (t.startsWith("kxhyped")) coin = "HYPE";
-          else if (t.startsWith("kxwifd")) coin = "WIF";
 
           // Parse threshold from ticker
           const threshMatch = s.ticker.match(/-T([\d.]+)$/);
@@ -1150,7 +1146,7 @@ async function buildMemoryContext(): Promise<string> {
         lines.push(`TRADE HISTORY (Kalshi settlements): ${total} trades | ${wins.length}W ${losses.length}L | ${winRate}% win rate | P&L: $${totalPnl.toFixed(2)}`);
 
         // By coin
-        const coinList = ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE", "WIF"];
+        const coinList = ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"];
         const coinStats: string[] = [];
         for (const c of coinList) {
           const ct = allTrades.filter((t) => t.coin === c);
@@ -1235,7 +1231,7 @@ async function buildMemoryContext(): Promise<string> {
           lines.push(`TRADE PATTERNS (Supabase): ${total} closed | ${wins.length}W ${losses.length}L | ${winRate}% win rate`);
 
           // By coin
-          const coins = ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE", "WIF"];
+          const coins = ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"];
           const coinStats: string[] = [];
           for (const c of coins) {
             const coinTrades = closedTrades.filter((t) => t.coin === c);
@@ -1275,7 +1271,7 @@ async function buildMemoryContext(): Promise<string> {
 // Returns null if any fetch fails (fail open — updown markets still analyzed, just without price data)
 // ---------------------------------------------------------------------------
 interface CryptoPrices {
-  btc: number; eth: number; sol: number; xrp: number; doge: number; bnb: number; hype: number; wif: number;
+  btc: number; eth: number; sol: number; xrp: number; doge: number; bnb: number; hype: number;
   btcTrend5m: number;   // percent change over last 5 minutes
   btcTrend15m: number;  // percent change over last 15 minutes
   btcTrend1h: number;   // percent change over last 1 hour
@@ -1285,7 +1281,7 @@ interface CryptoPrices {
 async function fetchLiveCryptoPrices(): Promise<CryptoPrices | null> {
   try {
     const requiredCoins = ["BTC", "ETH", "SOL", "XRP"] as const;
-    const optionalCoins = ["DOGE", "BNB", "HYPE", "WIF"] as const;
+    const optionalCoins = ["DOGE", "BNB", "HYPE"] as const;
     const allCoins = [...requiredCoins, ...optionalCoins];
     const spots: Record<string, number> = {};
 
@@ -1438,7 +1434,7 @@ async function fetchLiveCryptoPrices(): Promise<CryptoPrices | null> {
 
     const prices: CryptoPrices = {
       btc: spots.BTC, eth: spots.ETH, sol: spots.SOL, xrp: spots.XRP,
-      doge: spots.DOGE, bnb: spots.BNB, hype: spots.HYPE, wif: spots.WIF,
+      doge: spots.DOGE, bnb: spots.BNB, hype: spots.HYPE,
       btcTrend5m, btcTrend15m, btcTrend1h, btcChange24h,
     };
 
@@ -1448,7 +1444,7 @@ async function fetchLiveCryptoPrices(): Promise<CryptoPrices | null> {
     const t24h = btcChange24h >= 0 ? "+" : "";
     console.log(
       `  💰 Live prices: BTC=$${prices.btc.toLocaleString()} (${t5}${btcTrend5m.toFixed(2)}% 5m, ${t15}${btcTrend15m.toFixed(2)}% 15m, ${t1h}${btcTrend1h.toFixed(2)}% 1h, ${t24h}${btcChange24h.toFixed(1)}% 24h) ` +
-      `ETH=$${prices.eth.toLocaleString()} SOL=$${prices.sol.toFixed(0)} XRP=$${prices.xrp.toFixed(2)} DOGE=$${prices.doge.toFixed(4)} BNB=$${prices.bnb.toFixed(0)} HYPE=$${prices.hype.toFixed(2)} WIF=$${prices.wif.toFixed(2)}`
+      `ETH=$${prices.eth.toLocaleString()} SOL=$${prices.sol.toFixed(0)} XRP=$${prices.xrp.toFixed(2)} DOGE=$${prices.doge.toFixed(4)} BNB=$${prices.bnb.toFixed(0)} HYPE=$${prices.hype.toFixed(2)}`
     );
     return prices;
   } catch {
@@ -1505,7 +1501,6 @@ async function pollKalshi(): Promise<void> {
       "/markets?series_ticker=KXDOGED&status=open&limit=200",  // DOGE hourly
       "/markets?series_ticker=KXBNBD&status=open&limit=200",   // BNB hourly
       "/markets?series_ticker=KXHYPED&status=open&limit=200",  // HYPE hourly
-      "/markets?series_ticker=KXWIFD&status=open&limit=200",   // WIF hourly
     ];
 
     let allMarkets: KalshiMarketFromAPI[] = [];
@@ -1604,8 +1599,7 @@ async function pollKalshi(): Promise<void> {
         tickerLower.startsWith("kxxrpd") ||
         tickerLower.startsWith("kxdoged") ||
         tickerLower.startsWith("kxbnbd") ||
-        tickerLower.startsWith("kxhyped") ||
-        tickerLower.startsWith("kxwifd");
+        tickerLower.startsWith("kxhyped");
 
       let confThreshold: number;
 
@@ -1725,8 +1719,6 @@ async function pollKalshi(): Promise<void> {
             coinPrice = cryptoPrices.bnb;
           } else if (tickerLower.startsWith("kxhyped")) {
             coinPrice = cryptoPrices.hype;
-          } else if (tickerLower.startsWith("kxwifd")) {
-            coinPrice = cryptoPrices.wif;
           }
 
           if (coinPrice > 0) {
