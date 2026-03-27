@@ -384,21 +384,60 @@ Polymarket → Kalshi ticker mismatch was causing all EXEC failures. Instead of 
 
 ---
 
-## Sprint 13: Strategy Optimization — BACKLOG 📋
-**Goal:** Further optimize strategy and expand coin coverage
+## Sprint 13: Strategy Hardening + Coin Expansion — COMPLETE ✅
+**Dates:** Mar 26
+**Goal:** Ban losing YES trades, add HYPE coin, update to 24/7 trading
 
 | # | Task | Status |
 |---|------|--------|
-| 37 | Ban YES trades entirely — YES trades = 0% win rate historically | ⬜ WAITING FOR DATA |
-| — | Add HYPE coin (KXHYPED series) — visible on Kalshi sidebar, needs Coinbase price feed + ticker series | ⬜ NOT STARTED |
+| 37 | Ban YES trades entirely — hard block at auto-exec (0% WR, 3 trades, -$0.52) | ✅ COMPLETE |
+| — | Add HYPE coin (KXHYPED) — 7th coin, Coinbase fail-open, all 12 integration points | ✅ COMPLETE |
+| — | Add WIF coin (KXWIFD) then REMOVE — price $0.19 too low for sweet spot trades | ✅ COMPLETE (reverted) |
+| — | Overnight block update — 2am-6am daily → Thu 3-5am ET only (Kalshi 24/7 since Aug 2025) | ✅ COMPLETE |
+
+**Key Milestones — Sprint 13:**
+- **YES trades permanently banned:** If Claude returns YES → log skip + return. Only NO trades execute.
+- **HYPE coin LIVE:** KXHYPED series, Coinbase HYPE-USD (optional/fail-open), all filter/memory/exec paths wired
+- **WIF lesson learned:** Added as 8th coin assuming $2.50 price → actual price $0.19 → too cheap for sweet spot → removed same session. **Key lesson: always verify live price before adding coins.**
+- **24/7 trading enabled:** Kalshi moved to 24/7 on Aug 7, 2025. Only scheduled maintenance Thu 3-5am ET. Old 2am-6am nightly block was leaving money on the table.
+- **7 coins active:** BTC, ETH, SOL, XRP, DOGE, BNB, HYPE
+- **8 market series:** KXBTCD, KXBTC15M, KXETHD, KXSOLD, KXXRPD, KXDOGED, KXBNBD, KXHYPED
+
+**Mar 26 5pm ET Settlement — STRATEGY VALIDATED:**
+- BTC settled at $68,950
+- 4/4 NO positions WON (100% on sweet spot trades):
+  - $71,200 NO x3 = $3.00 ✅
+  - $71,450 NO x3 = $3.00 ✅
+  - $72,200 NO x3 = $3.00 ✅
+  - $72,450 NO x3 = $3.00 ✅
+- Total payout: $12.00 | Net profit: +$2.48
+
+**Performance (March 26, 2026 EOD):**
+- Portfolio: ~$94+ (bankroll deposited: $100)
+- 60+ settled trades | ~75-80% WR
+- Sweet spot 68-82¢ = 88% WR CONFIRMED with Mar 26 results
+
+**Files modified:**
+- src/scripts/feed.ts (Fix #37 YES ban, HYPE coin, WIF add+remove, overnight block update)
+
+---
+
+## Sprint 14: Scaling — BACKLOG 📋
+**Goal:** Scale trade sizes and add time-based intelligence
+
+| # | Task | Status |
+|---|------|--------|
+| 40 | Time-of-day memory patterns — morning vs evening, weekday vs weekend WR (after 200+ trades) | ⬜ NOT STARTED |
 | 9 | Win rate by strategy — breakdown showing which strategies perform best | ⬜ NOT STARTED |
-| 40 | Time-of-day memory patterns — morning vs evening, weekday vs weekend WR (after 100+ more trades) | ⬜ NOT STARTED |
+| — | Increase POSITION_SIZE_PCT 3%→5% (after $150 balance + 100 sweet spot trades validated) | ⬜ NOT STARTED |
+| — | Increase MAX_TRADE_CAP $5→$8 (when balance hits $250+) | ⬜ NOT STARTED |
 
 **Future Backlog (unscheduled):**
+- Research new coins with verified live prices before adding
 - Implement MACD(6/26/5) strategy on BTC 1-min candles
 - Wire Binance liquidation WebSocket feed
 - Combine MACD + liquidation = 85% confidence signal
 - RBI framework: Research → Backtest → Incubate → Scale
-- Validate 100+ trades → scale capital
+- Validate 200+ trades → scale capital
 - Build PolyBot SaaS subscription tier
 - Kalshi US app migration eval

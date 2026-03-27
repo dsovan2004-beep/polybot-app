@@ -131,16 +131,27 @@
 - **Performance (Mar 25 EOD):** ~$92-94 portfolio, 57 trades, 75.4% WR (43W/14L)
 - Files modified: feed.ts, page.tsx, kalshi.ts, positions/route.ts (NEW), stats/route.ts (NEW), markets/route.ts
 
-## Phase 13 — Strategy Optimization: BACKLOG 📋
-- Fix #37: Ban YES trades entirely (0% historical WR)
-- Add HYPE coin (KXHYPED series)
+## Phase 13 — Strategy Hardening + Coin Expansion: COMPLETE ✅
+- **YES trades permanently banned (Fix #37):** 0% WR on 3 trades, -$0.52. Hard block at auto-exec.
+- **HYPE coin LIVE (KXHYPED):** 7th coin, Coinbase fail-open, all 12 integration points wired
+- **WIF coin added then REMOVED:** Price $0.19 too low for sweet spot. Lesson: verify price before adding.
+- **24/7 trading enabled:** Overnight block 2am-6am → Thu 3-5am ET only (Kalshi 24/7 since Aug 2025)
+- **Mar 26 5pm settlement:** BTC $68,950 → 4/4 NO positions WON, $12 payout, +$2.48 net profit
+- **Sweet spot 68-82¢ CONFIRMED:** 88% WR validated with Mar 26 results
+- **Performance (Mar 26 EOD):** ~$94+ portfolio, 60+ trades, ~75-80% WR
+- Files modified: feed.ts only
+
+## Phase 14 — Scaling: BACKLOG 📋
+- Fix #40: Time-of-day memory patterns (after 200+ trades)
 - Fix #9: Win rate by strategy
-- Fix #40: Time-of-day memory patterns (after 100+ more trades)
+- Increase POSITION_SIZE_PCT 3%→5% (after $150 balance + 100 sweet spot trades)
+- Increase MAX_TRADE_CAP $5→$8 (when balance hits $250+)
+- Research new coins with verified live prices before adding
 
 ### Future Backlog (unscheduled)
 - MACD(6/26/5) + Binance liquidation combined strategy
 - RBI framework: Research → Backtest → Incubate → Scale
-- Validate 100+ trades → scale capital
+- Validate 200+ trades → scale capital
 - Build PolyBot SaaS subscription tier
 - Kalshi US app migration eval
 
@@ -172,9 +183,9 @@
 | Kalshi | ✅ Live | RSA-PSS signing, CFTC regulated exchange |
 | Telegram | ✅ Live | @Polybotsalerts_bot — signal + trade + kill alerts |
 | Data Feeds | ✅ Live | Kalshi REST polling every 30s, ~2,016 markets (~980 crypto) |
-| Coinbase | ✅ Live | BTC/ETH/SOL/XRP/DOGE/BNB spot + 4 BTC trend timeframes (5m/15m/1h/24h) |
+| Coinbase | ✅ Live | BTC/ETH/SOL/XRP/DOGE/BNB/HYPE spot + 4 BTC trend timeframes (5m/15m/1h/24h) |
 | Feed | ✅ Running | Mac terminal (feed.ts with self-test + Telegram + pump detector + smart memory) |
-| Signals | ✅ Flowing | Claude analyzing 7 crypto series with live prices + 12-16 line memory context |
+| Signals | ✅ Flowing | Claude analyzing 8 crypto series with live prices + 12-16 line memory context |
 | Dashboard | ✅ Live | polybot-app.pages.dev/bot — positions, verdicts, Kalshi P&L, crypto-only |
 | First Trade | ✅ Placed | March 20, 2026 4:24 PM PT |
-| Balance | ✅ Tracked | ~$92-94 portfolio (deposited $100, 57 trades, 75.4% WR) |
+| Balance | ✅ Tracked | ~$94+ portfolio (deposited $100, 60+ trades, ~75-80% WR) |

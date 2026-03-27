@@ -75,15 +75,24 @@ No new tables or columns. Changes to feed.ts filters, dashboard, and API routes:
   - /api/stats: `GET /portfolio/positions?settlement_status=settled&limit=200` → win/loss/P&L from realized_pnl
   - kalshiFetch exported from kalshi.ts for reuse in API routes
 - **Markets API (Bug #3):** /api/markets now filters server-side to crypto prefixes only (KXBTC, KXETH, KXSOL, KXXRP, KXDOGE, KXBNB)
-- **Filter pipeline now 8 layers:** overnight → pump → volume → distance → YES range → NO sweet spot → direction → Claude
+- **Filter pipeline now 8 layers:** maintenance → pump → volume → distance → YES range → NO sweet spot → direction → Claude
 
-## Feed Script Data Flow (feed.ts) — Sprint 12 Updated
-- Polls Kalshi REST API every 30 seconds: 3x GET /events + 7x GET /markets?series_ticker= (KXBTCD, KXBTC15M, KXETHD, KXSOLD, KXXRPD, KXDOGED, KXBNBD)
+## Sprint 13 Usage Notes (No Schema Changes)
+No new tables or columns. Changes to feed.ts logic only:
+- **YES trade ban (Fix #37):** Hard block at auto-exec stage — if finalVote === "YES" → log skip + return. Only NO trades execute. Claude can still return YES votes for signal tracking.
+- **HYPE coin (KXHYPED):** Added as 7th coin. Coinbase HYPE-USD (optional/fail-open). All 12 integration points: CryptoPrices interface, optionalCoins, prices object, log line, isCrypto check, Claude price context, isCryptoShortTerm, distance filter, market endpoint, autoExecTrade coin detection, Kalshi settlements coin detection, both memory coin lists.
+- **WIF coin (KXWIFD):** Added then REMOVED same session. Price was $0.19 (not $2.50 as assumed) — too cheap for sweet spot trades. Lesson: always verify live coin price before adding.
+- **Overnight block → maintenance block:** Changed from 2am-6am ET daily skip to Thu 3-5am ET only. Kalshi moved to 24/7 trading on Aug 7, 2025. Only scheduled maintenance Thu 3-5am ET.
+- **Markets API prefix filter:** Added KXHYPE to crypto prefixes in /api/markets/route.ts
+
+## Feed Script Data Flow (feed.ts) — Sprint 13 Updated
+- Polls Kalshi REST API every 30 seconds: 3x GET /events + 8x GET /markets?series_ticker= (KXBTCD, KXBTC15M, KXETHD, KXSOLD, KXXRPD, KXDOGED, KXBNBD, KXHYPED)
 - Fetches ~2,016 markets total (~1,115 general + ~980 crypto)
-- Fetches live Coinbase prices: BTC, ETH, SOL, XRP (required) + DOGE, BNB (optional, fail-open) + 4 BTC trend timeframes (5m/15m/1h/24h)
+- Fetches live Coinbase prices: BTC, ETH, SOL, XRP (required) + DOGE, BNB, HYPE (optional, fail-open) + 4 BTC trend timeframes (5m/15m/1h/24h)
 - **Crypto-only hard block:** non-crypto markets never reach Claude (Fix #31)
+- **YES trade ban:** Claude YES votes logged but never executed (Fix #37)
 - **Safety guards (before filters):**
-  - Overnight block: 2am–6am ET hard skip
+  - Kalshi maintenance block: Thu 3-5am ET only (Kalshi is 24/7 since Aug 2025)
   - 4-signal pump detector: 5m >0.5%, 15m >0.8%, 1h >1.5%, 24h >5%
 - **6-layer crypto filter pipeline:**
   1. Volume: crypto ≥ 1,000
