@@ -134,15 +134,27 @@ export async function GET() {
             title = String(mkt.title ?? mkt.subtitle ?? ticker);
           }
 
-          // Get current YES ask price
+          // Get current YES price — prefer last_price (actual market probability)
+          // over yes_ask (order book ask, which can be $1.00 in one-sided markets)
+          const lastPriceDollars = mkt.last_price_dollars as number | undefined;
+          const lastPriceCents = mkt.last_price as number | undefined;
+          const yesBidDollars = mkt.yes_bid_dollars as number | undefined;
+          const yesBidCents = mkt.yes_bid as number | undefined;
           const yesAskDollars = mkt.yes_ask_dollars as number | undefined;
-          if (yesAskDollars !== undefined && yesAskDollars > 0) {
+          const yesAskCents = mkt.yes_ask as number | undefined;
+
+          if (lastPriceDollars !== undefined && lastPriceDollars > 0) {
+            nowYesPct = Math.round(lastPriceDollars * 100);
+          } else if (lastPriceCents && lastPriceCents > 0) {
+            nowYesPct = lastPriceCents;
+          } else if (yesBidDollars !== undefined && yesBidDollars > 0) {
+            nowYesPct = Math.round(yesBidDollars * 100);
+          } else if (yesBidCents && yesBidCents > 0) {
+            nowYesPct = yesBidCents;
+          } else if (yesAskDollars !== undefined && yesAskDollars > 0) {
             nowYesPct = Math.round(yesAskDollars * 100);
-          } else {
-            const yesAskCents = mkt.yes_ask as number | undefined;
-            if (yesAskCents && yesAskCents > 0) {
-              nowYesPct = yesAskCents;
-            }
+          } else if (yesAskCents && yesAskCents > 0) {
+            nowYesPct = yesAskCents;
           }
 
           closeTime = String(
