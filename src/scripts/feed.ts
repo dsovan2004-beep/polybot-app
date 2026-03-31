@@ -894,9 +894,25 @@ async function syncSettledTrades(): Promise<void> {
     }>("GET", "/portfolio/positions?settlement_status=settled&limit=100");
 
     const settled = settledData.market_positions ?? [];
-    if (settled.length === 0) return;
+    if (settled.length === 0) {
+      console.log(`  📊 Settlement sync: 0 settled positions from Kalshi`);
+      return;
+    }
+
+    // Debug: show what Kalshi returned
+    const nonZero = settled.filter(p => {
+      const t = parseFloat(String(p.total_traded_dollars ?? "0"));
+      const pnl = parseFloat(String(p.realized_pnl_dollars ?? "0"));
+      return t > 0 || pnl !== 0;
+    });
+    console.log(`  📊 Settlement sync: ${settled.length} settled positions (${nonZero.length} with trades)`);
+    if (nonZero.length > 0) {
+      console.log(`  📊 Sample tickers: ${nonZero.slice(0, 3).map(p => p.ticker).join(", ")}`);
+    }
 
     let synced = 0;
+    let alreadySynced = 0;
+    let noMatch = 0;
     for (const pos of settled) {
       const ticker = pos.ticker;
       const pnlDollars = parseFloat(String(pos.realized_pnl_dollars ?? "0"));
@@ -936,7 +952,24 @@ async function syncSettledTrades(): Promise<void> {
         }
       }
 
-      if (!tradeRow) continue; // Already synced or no matching trade
+      if (!tradeRow) {
+        // Debug: check if trade exists but already has outcome
+        const { data: existingTrade } = await supabase
+          .from("trades")
+          .select("id, outcome")
+          .ilike("notes", `%| ${ticker} |%`)
+          .limit(1)
+          .single();
+        if (existingTrade) {
+          alreadySynced++;
+        } else {
+          noMatch++;
+          if (noMatch <= 3) {
+            console.log(`  ⚠️  No trade found for: ${ticker} (pnl: $${pnlDollars.toFixed(2)})`);
+          }
+        }
+        continue;
+      }
 
       // Determine outcome:
       //   positive pnl = win, negative = loss, zero with trades = breakeven (win)
@@ -960,9 +993,7 @@ async function syncSettledTrades(): Promise<void> {
       }
     }
 
-    if (synced > 0) {
-      console.log(`  📊 Settlement sync: ${synced} trades updated`);
-    }
+    console.log(`  📊 Settlement sync: ${synced} synced, ${alreadySynced} already done, ${noMatch} no match`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ⚠️  syncSettledTrades failed: ${msg}`);
