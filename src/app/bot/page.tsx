@@ -5,6 +5,12 @@ import type {
   MarketRow,
   SignalRow,
 } from "@/lib/supabase";
+import dynamic from "next/dynamic";
+
+const WinLossAnalytics = dynamic(() => import("@/components/WinLossAnalytics"), {
+  ssr: false,
+  loading: () => <p style={{ color: "#94a3b8", fontSize: 13, padding: 16 }}>Loading analytics...</p>,
+});
 
 // ============================================================================
 // PolyBot Dashboard — /bot  (Sprint 3)
@@ -1617,6 +1623,9 @@ export default function BotDashboard() {
             </Card>
           </div>
         )}
+
+        {/* ── WIN/LOSS ANALYTICS ── */}
+        <WinLossAnalytics />
 
         {/* ── SIGNAL HISTORY ── */}
         {signals.length > 0 && (
