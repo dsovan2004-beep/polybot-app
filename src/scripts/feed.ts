@@ -99,7 +99,7 @@ const MIN_BALANCE_FLOOR = 5.00; // Never trade below this balance ($)
 // Dynamic position sizing — scales with bankroll + confidence
 const POSITION_SIZE_PCT = 0.03;       // 3% of balance per trade (base)
 const MIN_TRADE_DOLLARS = 0.50;       // Floor: never less than $0.50
-const MAX_TRADE_DOLLARS_CAP = 5.00;   // Ceiling: never more than $5.00 per trade
+const MAX_TRADE_DOLLARS_CAP = 15.00;  // Ceiling: never more than $15.00 per trade
 const MAX_POSITIONS_PCT = 0.25;       // Deploy up to 25% of balance across all positions
 const MAX_POSITIONS_FLOOR = 8;        // Minimum positions allowed
 const MAX_POSITIONS_CEIL = 20;        // Maximum positions allowed
