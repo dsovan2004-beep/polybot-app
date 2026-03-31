@@ -993,7 +993,103 @@ async function syncSettledTrades(): Promise<void> {
       }
     }
 
-    console.log(`  📊 Settlement sync: ${synced} synced, ${alreadySynced} already done, ${noMatch} no match`);
+    console.log(`  📊 Settlement sync (Kalshi-first): ${synced} synced, ${alreadySynced} already done, ${noMatch} no match`);
+
+    // ═══════════════════════════════════════════════════════════════
+    // Phase 2: Supabase-first backfill — check unresolved trades
+    // against Kalshi market results (catches historical settlements
+    // that Kalshi's settled positions API no longer returns)
+    // ═══════════════════════════════════════════════════════════════
+    const { data: unresolvedTrades } = await supabase
+      .from("trades")
+      .select("id, direction, notes, entry_price, shares")
+      .is("outcome", null)
+      .like("notes", "AUTO-EXEC:%")
+      .limit(100);
+
+    if (unresolvedTrades && unresolvedTrades.length > 0) {
+      console.log(`  📊 Backfill: ${unresolvedTrades.length} unresolved trades to check`);
+      let backfilled = 0;
+      let stillOpen = 0;
+      let apiCalls = 0;
+      const MAX_API_CALLS = 50;
+
+      for (const trade of unresolvedTrades) {
+        if (apiCalls >= MAX_API_CALLS) {
+          console.log(`  📊 Backfill: hit ${MAX_API_CALLS} API call cap, will continue next cycle`);
+          break;
+        }
+
+        // Extract ticker from notes: "AUTO-EXEC: {orderId} | {ticker} | conf:..."
+        const notesStr = trade.notes ?? "";
+        const pipeSegments = notesStr.split("|").map((s: string) => s.trim());
+        // pipeSegments[0] = "AUTO-EXEC: {orderId}", [1] = ticker, [2] = "conf:XX%", [3] = "NNx@XXc"
+        const ticker = pipeSegments.length >= 2 ? pipeSegments[1] : null;
+        if (!ticker) continue;
+
+        // Check Kalshi market status
+        try {
+          apiCalls++;
+          const marketData = await kalshiFetch<{
+            market: {
+              ticker: string;
+              status: string;
+              result: string;
+              expiration_value: string;
+            };
+          }>("GET", `/markets/${ticker}`);
+
+          const market = marketData.market;
+          if (!market || market.status !== "finalized") {
+            stillOpen++;
+            continue;
+          }
+
+          // Determine outcome based on market result + trade direction
+          const marketResult = market.result; // "yes" or "no"
+          const tradeDir = (trade.direction ?? "").toLowerCase(); // "yes" or "no"
+          let outcome: "win" | "loss";
+          if (marketResult === tradeDir) {
+            outcome = "win";
+          } else {
+            outcome = "loss";
+          }
+
+          // Calculate P&L: win = payout - cost, loss = -cost
+          const entryPrice = parseFloat(String(trade.entry_price ?? "0"));
+          const shares = parseInt(String(trade.shares ?? "0"), 10);
+          const entryCost = entryPrice * shares;
+          const pnl = outcome === "win"
+            ? (1.0 * shares) - entryCost  // $1 payout per share minus cost
+            : -entryCost;                   // lost the entry cost
+
+          const { error: updateErr } = await supabase
+            .from("trades")
+            .update({
+              status: "closed",
+              outcome,
+              pnl: Math.round(pnl * 100) / 100,
+              exit_at: new Date().toISOString(),
+              notes: `SETTLED: ${ticker} | result:${marketResult} | ${outcome === "win" ? "+" : ""}$${pnl.toFixed(2)}`,
+            })
+            .eq("id", trade.id);
+
+          if (!updateErr) {
+            backfilled++;
+            const emoji = outcome === "win" ? "✅" : "❌";
+            console.log(`  ${emoji} BACKFILL: ${ticker} → ${outcome} (${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)})`);
+          }
+
+          // Small delay to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (err) {
+          // Market might not exist or API error — skip silently
+          continue;
+        }
+      }
+
+      console.log(`  📊 Backfill: ${backfilled} synced, ${stillOpen} still open, ${apiCalls} API calls`);
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ⚠️  syncSettledTrades failed: ${msg}`);
