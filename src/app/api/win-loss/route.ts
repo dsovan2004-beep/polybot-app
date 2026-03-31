@@ -2,7 +2,7 @@
 // PolyBot — Win/Loss Analytics API (Fix #41c — Supabase trades table)
 // GET /api/win-loss
 // Queries trades table where outcome IS NOT NULL (same pattern as feed.ts L1218-1221)
-// Fields used: outcome ("win"|"loss"), pnl, coin, created_at (all confirmed in feed.ts)
+// Fields used: outcome ("win"|"loss"), pnl, coin, entry_at (all confirmed in feed.ts)
 // Edge runtime compatible
 // ============================================================================
 
@@ -49,9 +49,9 @@ export async function GET() {
     debug.step = "query-trades";
     const { data: trades, error: tradeErr } = await sb
       .from("trades")
-      .select("outcome, pnl, coin, created_at")
+      .select("outcome, pnl, coin, entry_at")
       .not("outcome", "is", null)
-      .order("created_at", { ascending: false })
+      .order("entry_at", { ascending: false })
       .limit(500);
 
     debug.tradeError = tradeErr?.message ?? null;
@@ -128,7 +128,7 @@ export async function GET() {
     for (const t of trades) {
       const outcome = String(t.outcome);
       const pnl = Number(t.pnl ?? 0);
-      const dateStr = String(t.created_at ?? "").slice(0, 10); // YYYY-MM-DD
+      const dateStr = String(t.entry_at ?? "").slice(0, 10); // YYYY-MM-DD
 
       if (outcome === "win") {
         totalWins++;

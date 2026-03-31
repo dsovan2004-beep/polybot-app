@@ -876,6 +876,86 @@ async function checkAndSellPositions(): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Settlement sync — write Kalshi settlement outcomes back to Supabase trades
+// Runs once per poll cycle, syncs settled positions that feed never updated
+// ---------------------------------------------------------------------------
+
+async function syncSettledTrades(): Promise<void> {
+  try {
+    // Fetch settled positions from Kalshi (uses realized_pnl_dollars — confirmed field name)
+    const settledData = await kalshiFetch<{
+      market_positions: {
+        ticker: string;
+        realized_pnl_dollars: string;
+        total_traded_dollars: string;
+        position_fp: string;
+      }[];
+    }>("GET", "/portfolio/positions?settlement_status=settled&limit=100");
+
+    const settled = settledData.market_positions ?? [];
+    if (settled.length === 0) return;
+
+    let synced = 0;
+    for (const pos of settled) {
+      const ticker = pos.ticker;
+      const pnlDollars = parseFloat(String(pos.realized_pnl_dollars ?? "0"));
+      const totalTraded = parseFloat(String(pos.total_traded_dollars ?? "0"));
+
+      // Skip positions with no actual trades (legacy $0 positions)
+      if (totalTraded <= 0 && pnlDollars === 0) continue;
+
+      // Find matching market row: markets.polymarket_id = ticker
+      const { data: marketRow } = await supabase
+        .from("markets")
+        .select("id")
+        .eq("polymarket_id", ticker)
+        .single();
+
+      if (!marketRow) continue; // Not a PolyBot-tracked market
+
+      // Find matching trade that has no outcome yet
+      const { data: tradeRow } = await supabase
+        .from("trades")
+        .select("id, direction")
+        .eq("market_id", marketRow.id)
+        .is("outcome", null)
+        .limit(1)
+        .single();
+
+      if (!tradeRow) continue; // Already synced or no matching trade
+
+      // Determine outcome:
+      //   positive pnl = win, negative = loss, zero with trades = breakeven (win)
+      const outcome = pnlDollars >= 0 ? "win" : "loss";
+
+      const { error: updateErr } = await supabase
+        .from("trades")
+        .update({
+          status: "closed",
+          outcome,
+          pnl: pnlDollars,
+          exit_at: new Date().toISOString(),
+          notes: `SETTLED: ${ticker} | P&L: ${pnlDollars >= 0 ? "+" : ""}$${pnlDollars.toFixed(2)}`,
+        })
+        .eq("id", tradeRow.id);
+
+      if (!updateErr) {
+        synced++;
+        const emoji = outcome === "win" ? "✅" : "❌";
+        console.log(`  ${emoji} SETTLED: ${ticker} → ${outcome} (${pnlDollars >= 0 ? "+" : ""}$${pnlDollars.toFixed(2)})`);
+      }
+    }
+
+    if (synced > 0) {
+      console.log(`  📊 Settlement sync: ${synced} trades updated`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  ⚠️  syncSettledTrades failed: ${msg}`);
+  }
+}
+
 interface ClaudeSignal {
   vote: "YES" | "NO" | "NO_TRADE";
   probability: number;
@@ -1480,6 +1560,9 @@ async function pollKalshi(): Promise<void> {
 
     // Check open positions for take-profit opportunities (before new analysis)
     await checkAndSellPositions();
+
+    // Sync Kalshi settlements back to Supabase trades (after TP/SL check)
+    await syncSettledTrades();
 
     // Build memory context once per poll cycle (positions + trade history)
     const memoryContext = await buildMemoryContext();
