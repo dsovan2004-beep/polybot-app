@@ -905,23 +905,36 @@ async function syncSettledTrades(): Promise<void> {
       // Skip positions with no actual trades (legacy $0 positions)
       if (totalTraded <= 0 && pnlDollars === 0) continue;
 
-      // Find matching market row: markets.polymarket_id = ticker
-      const { data: marketRow } = await supabase
-        .from("markets")
-        .select("id")
-        .eq("polymarket_id", ticker)
-        .single();
-
-      if (!marketRow) continue; // Not a PolyBot-tracked market
-
-      // Find matching trade that has no outcome yet
-      const { data: tradeRow } = await supabase
+      // ── Primary: match via notes field (contains ticker directly) ──
+      // Notes format: "AUTO-EXEC: {orderId} | {ticker} | conf:{n}% | ..."
+      const { data: tradeByNotes } = await supabase
         .from("trades")
         .select("id, direction")
-        .eq("market_id", marketRow.id)
+        .ilike("notes", `%| ${ticker} |%`)
         .is("outcome", null)
         .limit(1)
         .single();
+
+      // ── Fallback: match via markets table lookup ──
+      let tradeRow = tradeByNotes;
+      if (!tradeRow) {
+        const { data: marketRow } = await supabase
+          .from("markets")
+          .select("id")
+          .eq("polymarket_id", ticker)
+          .single();
+
+        if (marketRow) {
+          const { data: tradeByMarket } = await supabase
+            .from("trades")
+            .select("id, direction")
+            .eq("market_id", marketRow.id)
+            .is("outcome", null)
+            .limit(1)
+            .single();
+          tradeRow = tradeByMarket;
+        }
+      }
 
       if (!tradeRow) continue; // Already synced or no matching trade
 
