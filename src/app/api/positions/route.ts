@@ -18,6 +18,7 @@ function parseTickerLabel(ticker: string): string | null {
   const coinMap: Record<string, string> = {
     KXBTCD: "BTC", KXETHD: "ETH", KXSOLD: "SOL",
     KXXRPD: "XRP", KXDOGED: "DOGE", KXBNBD: "BNB",
+    KXHYPED: "HYPE",
   };
 
   // 15-min BTC: KXBTC15M-26MAR25T1300-T71500

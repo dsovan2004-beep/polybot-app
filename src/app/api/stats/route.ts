@@ -38,6 +38,7 @@ function parseTickerTitle(ticker: string): string {
       KXXRPD: "XRP",
       KXDOGED: "DOGE",
       KXBNBD: "BNB",
+      KXHYPED: "HYPE",
     };
     const coin = coinMap[series.toUpperCase()] ?? series;
     const t = parseFloat(threshold);

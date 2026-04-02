@@ -264,6 +264,7 @@ function parseCryptoTicker(ticker: string | null): string | null {
   const coinMap: Record<string, string> = {
     KXBTCD: "BTC", KXETHD: "ETH", KXSOLD: "SOL",
     KXXRPD: "XRP", KXDOGED: "DOGE", KXBNBD: "BNB",
+    KXHYPED: "HYPE",
   };
   // 15-min: KXBTC15M-26MAR25T1300-T71500
   const m15 = ticker.match(/^KXBTC15M-\d{2}\w{3}\d{2}T(\d{2})(\d{2})-T([\d.]+)$/i);
