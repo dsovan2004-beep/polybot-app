@@ -964,9 +964,7 @@ async function syncSettledTrades(): Promise<void> {
           alreadySynced++;
         } else {
           noMatch++;
-          if (noMatch <= 3) {
-            console.log(`  ⚠️  No trade found for: ${ticker} (pnl: $${pnlDollars.toFixed(2)})`);
-          }
+          // Silently skip — orphaned positions (manually placed) are harmless
         }
         continue;
       }
