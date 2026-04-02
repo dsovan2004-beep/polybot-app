@@ -1882,9 +1882,9 @@ async function pollKalshi(): Promise<void> {
           totalFiltered++;
           continue;
         }
-        // NO price sweet spot filter — data-driven optimal band (68-82¢)
+        // NO price sweet spot filter — data-driven optimal band (68-85¢)
         const noCentsGeneral = 100 - yesCentsGeneral;
-        if (noCentsGeneral < 68 || noCentsGeneral > 82) {
+        if (noCentsGeneral < 68 || noCentsGeneral > 85) {
           totalFiltered++;
           continue;
         }
@@ -1998,12 +1998,12 @@ async function pollKalshi(): Promise<void> {
         }
 
         // NO price sweet spot filter — data-driven optimal band
-        // NO price = 1.00 - YES price.  Only trade NO at 68-82¢.
+        // NO price = 1.00 - YES price.  Only trade NO at 68-85¢.
         // 71-80¢: 88% WR, +$1.90 | 81-90¢: 69% WR, -$4.10 | 55-70¢: 44% WR, -$1.90
-        // YES 18-32¢ → NO 68-82¢ = SWEET SPOT ✅
+        // YES 15-32¢ → NO 68-85¢ = SWEET SPOT ✅
         const noCents = 100 - yesCents;
-        if (noCents < 68 || noCents > 82) {
-          console.log(`  💰 SKIP: ${m.ticker} NO price ${noCents}c outside sweet spot 68-82c`);
+        if (noCents < 68 || noCents > 85) {
+          console.log(`  💰 SKIP: ${m.ticker} NO price ${noCents}c outside sweet spot 68-85c`);
           totalFiltered++;
           continue;
         }
