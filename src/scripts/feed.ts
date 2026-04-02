@@ -1149,6 +1149,29 @@ Volume: $${volume.toLocaleString()}${btcPrice ? `\nCurrent BTC price: $${btcPric
         if (!isCrypto) return "";
         return `\nLIVE MARKET DATA (Coinbase): BTC=$${cryptoPrices.btc.toLocaleString()} (${cryptoPrices.btcTrend5m >= 0 ? "+" : ""}${cryptoPrices.btcTrend5m.toFixed(2)}% 5min). ETH=$${cryptoPrices.eth.toLocaleString()}. SOL=$${cryptoPrices.sol.toFixed(0)}. XRP=$${cryptoPrices.xrp.toFixed(2)}. DOGE=$${cryptoPrices.doge.toFixed(4)}. BNB=$${cryptoPrices.bnb.toFixed(0)}. HYPE=$${cryptoPrices.hype.toFixed(2)}. Use the 5-min trend to assess UP or DOWN direction for the next 15 minutes. Rising momentum = lean UP. Falling momentum = lean DOWN.`;
       })()
+    }${
+      (() => {
+        if (!cryptoPrices || !isCrypto) return "";
+        const t = kalshiTicker.toLowerCase();
+        const thMatch = kalshiTicker.match(/-T([\d.]+)$/);
+        if (!thMatch) return "";
+        const strike = parseFloat(thMatch[1]);
+        // Determine coin price
+        let coinPrice = 0;
+        let coinName = "BTC";
+        if (t.startsWith("kxbtcd") || t.startsWith("kxbtc15m")) { coinPrice = cryptoPrices.btc; coinName = "BTC"; }
+        else if (t.startsWith("kxethd") || t.startsWith("kxeth15m")) { coinPrice = cryptoPrices.eth; coinName = "ETH"; }
+        else if (t.startsWith("kxsold")) { coinPrice = cryptoPrices.sol; coinName = "SOL"; }
+        else if (t.startsWith("kxxrpd")) { coinPrice = cryptoPrices.xrp; coinName = "XRP"; }
+        else if (t.startsWith("kxdoged")) { coinPrice = cryptoPrices.doge; coinName = "DOGE"; }
+        else if (t.startsWith("kxbnbd")) { coinPrice = cryptoPrices.bnb; coinName = "BNB"; }
+        else if (t.startsWith("kxhyped")) { coinPrice = cryptoPrices.hype; coinName = "HYPE"; }
+        if (coinPrice <= 0) return "";
+        const diff = strike - coinPrice;
+        const pct = ((diff / coinPrice) * 100).toFixed(2);
+        const dir = diff > 0 ? "UP" : "DOWN";
+        return `\n\n--- DIRECTION CONTEXT (use this, do NOT guess) ---\nCurrent ${coinName} price: $${coinPrice.toLocaleString()}\nStrike price: $${strike.toLocaleString()}\nDirection: ${coinName} must move ${dir} $${Math.abs(diff).toFixed(0)} (${diff > 0 ? "+" : ""}${pct}%) to reach the strike\nYou are evaluating a NO bet: you WIN if ${coinName} does NOT reach $${strike.toLocaleString()} by expiry`;
+      })()
     }
 
 What is your analysis?`;
