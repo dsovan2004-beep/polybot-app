@@ -1803,7 +1803,6 @@ async function pollKalshi(): Promise<void> {
     let processed = 0;
     let skippedStatus = 0;
     let skippedPrice = 0;
-    let skippedSports = 0;
     let skippedVolume = 0;
     let skippedExpiry = 0;
     for (const { m, daysLeft } of marketsWithExpiry) {
@@ -1875,11 +1874,31 @@ async function pollKalshi(): Promise<void> {
         continue;
       }
 
-      // Sports filter — skip sports markets entirely
-      if (isSports(m.title)) {
-        skippedSports++;
-        totalFiltered++;
-        continue;
+      // Non-crypto markets: apply sweet spot + volume filters (same guardrails as crypto)
+      if (!isCryptoShortTerm) {
+        // YES price range filter — skip extremes
+        const yesCentsGeneral = Math.round(yesPrice * 100);
+        if (yesCentsGeneral < 10 || yesCentsGeneral > 55) {
+          totalFiltered++;
+          continue;
+        }
+        // NO price sweet spot filter — data-driven optimal band (68-82¢)
+        const noCentsGeneral = 100 - yesCentsGeneral;
+        if (noCentsGeneral < 68 || noCentsGeneral > 82) {
+          totalFiltered++;
+          continue;
+        }
+        // Volume floor for non-crypto: 500+
+        if (vol24h < 500) {
+          skippedVolume++;
+          totalFiltered++;
+          continue;
+        }
+        // Categorize and log pass
+        const cat = categorize(m.title);
+        const emoji = isSports(m.title) ? "🏈" : cat === "politics" ? "🗳️" : "📊";
+        const label = isSports(m.title) ? "SPORTS" : cat === "politics" ? "POLITICS" : "GENERAL";
+        console.log(`  ${emoji} ${label} PASS: ${m.ticker} daysLeft=${daysLeft} YES=${yesCentsGeneral}c vol=${vol24h}`);
       }
 
       // Crypto proximity + volume filters — avoid high-risk trades near current price
@@ -2006,11 +2025,6 @@ async function pollKalshi(): Promise<void> {
         `  📈 ${m.ticker} | ${(yesPrice * 100).toFixed(0)}c | vol:${vol24h} | [${category}] ${m.title.slice(0, 50)}`
       );
 
-      // CRYPTO-ONLY: skip Claude analysis for non-crypto markets (saves ~20+ API calls/cycle)
-      if (!isCryptoShortTerm) {
-        continue;
-      }
-
       // Analyze with Claude (confThreshold from tiered expiry system)
       const expirationRaw = String(m.close_time ?? m.expiration_time ?? m.end_date_iso ?? "");
       await analyzeMarket(
@@ -2029,7 +2043,7 @@ async function pollKalshi(): Promise<void> {
       );
     }
 
-    console.log(`  ✅ Processed ${processed} | skipped: status=${skippedStatus} expiry=${skippedExpiry} price=${skippedPrice} volume=${skippedVolume} sports=${skippedSports}`);
+    console.log(`  ✅ Processed ${processed} | skipped: status=${skippedStatus} expiry=${skippedExpiry} price=${skippedPrice} volume=${skippedVolume}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ❌ Poll failed: ${msg}`);
