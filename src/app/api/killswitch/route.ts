@@ -63,16 +63,13 @@ export async function POST(request: Request) {
       // No body or invalid JSON — default to activate (backward compatible)
     }
 
-    // Upsert today's performance row (service role bypasses RLS)
+    // Upsert today's performance row — only touch kill_switch, never zero trade stats
     const { error } = await getServiceSupabase()
       .from("performance")
       .upsert(
         {
           date: today,
           kill_switch: activate,
-          trades_count: 0,
-          wins: 0,
-          losses: 0,
         },
         { onConflict: "date" }
       );
