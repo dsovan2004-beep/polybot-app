@@ -1411,8 +1411,10 @@ export default function BotDashboard() {
               .filter((d) => d.date >= weekStr)
               .reduce((sum, d) => sum + (d.pnl ?? 0), 0);
 
-            // All-time from stats (Kalshi settlements = most accurate)
-            const allTimePnl = statsData?.netPnl ?? winLossData.netPnl ?? 0;
+            // All-time: prefer stats (Kalshi settlements) when non-zero, else win-loss (Supabase)
+            const statsNet = statsData?.netPnl ?? 0;
+            const wlNet = winLossData.netPnl ?? 0;
+            const allTimePnl = statsNet !== 0 ? statsNet : wlNet;
 
             return (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 16 }}>
@@ -1421,7 +1423,7 @@ export default function BotDashboard() {
                     Today&apos;s P&amp;L
                   </p>
                   <p style={{ fontSize: 24, fontWeight: 700, color: pnlColor(todayPnl), marginTop: 4, fontFamily: "monospace" }}>
-                    {todayPnl >= 0 ? "+" : ""}{fmt$(todayPnl)}
+                    {todayPnl > 0 ? "+" : ""}{fmt$(todayPnl)}
                   </p>
                 </Card>
                 <Card>
@@ -1429,7 +1431,7 @@ export default function BotDashboard() {
                     This Week
                   </p>
                   <p style={{ fontSize: 24, fontWeight: 700, color: pnlColor(weekPnl), marginTop: 4, fontFamily: "monospace" }}>
-                    {weekPnl >= 0 ? "+" : ""}{fmt$(weekPnl)}
+                    {weekPnl > 0 ? "+" : ""}{fmt$(weekPnl)}
                   </p>
                 </Card>
                 <Card>
@@ -1437,7 +1439,7 @@ export default function BotDashboard() {
                     All-Time P&amp;L
                   </p>
                   <p style={{ fontSize: 24, fontWeight: 700, color: pnlColor(allTimePnl), marginTop: 4, fontFamily: "monospace" }}>
-                    {allTimePnl >= 0 ? "+" : ""}{fmt$(allTimePnl)}
+                    {allTimePnl > 0 ? "+" : ""}{fmt$(allTimePnl)}
                   </p>
                 </Card>
               </div>
