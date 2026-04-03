@@ -127,17 +127,6 @@ export async function GET() {
     // Return last 10 trades (most recent first)
     const recentTrades = trades.slice(-10).reverse();
 
-    // Debug: raw sums for diagnosing P&L
-    const debugPayoutSum = realSettled.reduce((s, p) => s + Number(p.realized_pnl_dollars ?? 0), 0);
-    const debugCostSum = realSettled.reduce((s, p) => s + Number(p.total_traded_dollars ?? 0), 0);
-    const debugSample = realSettled.slice(0, 3).map((p) => ({
-      ticker: String(p.ticker ?? ""),
-      realized_pnl_dollars: p.realized_pnl_dollars,
-      total_traded_dollars: p.total_traded_dollars,
-      realized_pnl: p.realized_pnl,
-      total_traded: p.total_traded,
-    }));
-
     return Response.json({
       ok: true,
       data: {
@@ -147,14 +136,6 @@ export async function GET() {
         winRate: Math.round(winRate * 1000) / 1000,
         netPnl: Math.round(netPnlDollars * 100) / 100,
         recentTrades,
-      },
-      debug: {
-        settledCount: settled.length,
-        realSettledCount: realSettled.length,
-        payoutSum: Math.round(debugPayoutSum * 100) / 100,
-        costSum: Math.round(debugCostSum * 100) / 100,
-        netPnlRaw: Math.round(netPnlDollars * 100) / 100,
-        samplePositions: debugSample,
       },
     });
   } catch (err) {
