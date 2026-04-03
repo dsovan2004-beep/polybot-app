@@ -15,6 +15,7 @@ interface DailyRecord {
   wins: number;
   losses: number;
   winRate: number;
+  pnl: number; // daily P&L in dollars
 }
 
 export async function GET() {
@@ -97,6 +98,7 @@ export async function GET() {
           wins: w,
           losses: l,
           winRate: w + l > 0 ? w / (w + l) : 0,
+          pnl: Number(row.pnl_day ?? 0),
         });
       }
 
@@ -123,7 +125,7 @@ export async function GET() {
     let totalWins = 0;
     let totalLosses = 0;
     let netPnlCents = 0;
-    const byDate: Record<string, { wins: number; losses: number }> = {};
+    const byDate: Record<string, { wins: number; losses: number; pnlCents: number }> = {};
 
     for (const t of trades) {
       const outcome = String(t.outcome);
@@ -132,14 +134,15 @@ export async function GET() {
 
       if (outcome === "win") {
         totalWins++;
-        if (!byDate[dateStr]) byDate[dateStr] = { wins: 0, losses: 0 };
+        if (!byDate[dateStr]) byDate[dateStr] = { wins: 0, losses: 0, pnlCents: 0 };
         byDate[dateStr].wins++;
       } else if (outcome === "loss") {
         totalLosses++;
-        if (!byDate[dateStr]) byDate[dateStr] = { wins: 0, losses: 0 };
+        if (!byDate[dateStr]) byDate[dateStr] = { wins: 0, losses: 0, pnlCents: 0 };
         byDate[dateStr].losses++;
       }
 
+      if (byDate[dateStr]) byDate[dateStr].pnlCents += Math.round(pnl * 100);
       netPnlCents += Math.round(pnl * 100);
     }
 
@@ -147,11 +150,12 @@ export async function GET() {
     const daily: DailyRecord[] = Object.entries(byDate)
       .sort(([a], [b]) => b.localeCompare(a))
       .slice(0, 90)
-      .map(([date, { wins, losses }]) => ({
+      .map(([date, { wins, losses, pnlCents }]) => ({
         date,
         wins,
         losses,
         winRate: wins + losses > 0 ? wins / (wins + losses) : 0,
+        pnl: Math.round(pnlCents) / 100,
       }));
 
     const totalTrades = totalWins + totalLosses;

@@ -191,10 +191,34 @@ interface StatsApiData {
   recentTrades: RecentTrade[];
 }
 
+interface WinLossDailyRecord {
+  date: string;
+  wins: number;
+  losses: number;
+  winRate: number;
+  pnl: number;
+}
+
+interface WinLossData {
+  totalTrades: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  netPnl: number;
+  daily: WinLossDailyRecord[];
+}
+
 async function fetchStats(): Promise<StatsApiData> {
   const res = await fetch("/api/stats");
   const json = await res.json();
   if (!json.ok) throw new Error(json.error ?? "Failed to load stats");
+  return json.data;
+}
+
+async function fetchWinLoss(): Promise<WinLossData> {
+  const res = await fetch("/api/win-loss");
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error ?? "Failed to load win-loss");
   return json.data;
 }
 
@@ -806,6 +830,7 @@ export default function BotDashboard() {
   const [balanceData, setBalanceData] = useState<BalanceData | null>(null);
   const [posData, setPosData] = useState<PositionsApiData | null>(null);
   const [statsData, setStatsData] = useState<StatsApiData | null>(null);
+  const [winLossData, setWinLossData] = useState<WinLossData | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [marketFilter, setMarketFilter] = useState<"all" | "exec" | "live" | "no_trade">("all");
 
@@ -938,6 +963,16 @@ export default function BotDashboard() {
     }
   }, []);
 
+  // Fetch win/loss daily data for PNL card
+  const loadWinLoss = useCallback(async () => {
+    try {
+      const data = await fetchWinLoss();
+      setWinLossData(data);
+    } catch {
+      // Silent fail
+    }
+  }, []);
+
   // Auto-clear toast after 4 seconds
   useEffect(() => {
     if (!toast) return;
@@ -952,12 +987,14 @@ export default function BotDashboard() {
     loadBalance();
     loadPositions();
     loadStats();
+    loadWinLoss();
     const dashInterval = setInterval(loadMarkets, 30_000);
     const btcInterval = setInterval(loadBtc, 5_000);
     const killInterval = setInterval(checkKillSwitch, 60_000);
     const balInterval = setInterval(loadBalance, 60_000);
     const posInterval = setInterval(loadPositions, 30_000);
     const statsInterval = setInterval(loadStats, 60_000);
+    const winLossInterval = setInterval(loadWinLoss, 60_000);
     return () => {
       clearInterval(dashInterval);
       clearInterval(btcInterval);
@@ -965,8 +1002,9 @@ export default function BotDashboard() {
       clearInterval(balInterval);
       clearInterval(posInterval);
       clearInterval(statsInterval);
+      clearInterval(winLossInterval);
     };
-  }, [loadMarkets, loadBtc, checkKillSwitch, loadBalance, loadPositions, loadStats]);
+  }, [loadMarkets, loadBtc, checkKillSwitch, loadBalance, loadPositions, loadStats, loadWinLoss]);
 
   // Execute trade handler
   const handleExecute = useCallback(
@@ -1320,7 +1358,7 @@ export default function BotDashboard() {
             <p style={{ fontSize: 11, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em" }}>
               Positions Value
             </p>
-            <p style={{ fontSize: 28, fontWeight: 700, color: css.indigo, marginTop: 4, fontFamily: "monospace" }}>
+            <p style={{ fontSize: 28, fontWeight: 700, color: (posData?.portfolio.positionsValue ?? 0) > 0 ? "#4ade80" : css.textPrimary, marginTop: 4, fontFamily: "monospace" }}>
               {fmt$(posData?.portfolio.positionsValue ?? 0)}
             </p>
           </Card>
@@ -1356,6 +1394,55 @@ export default function BotDashboard() {
               Net P&L: <strong style={{ color: pnlColor(statsData.netPnl) }}>{fmt$(statsData.netPnl)}</strong>
             </span>
           </div>
+        )}
+
+        {/* ── SECTION 4: PNL CARD (Today / Week / All-Time) ── */}
+        {winLossData && (
+          (() => {
+            const today = new Date().toISOString().slice(0, 10);
+            const todayRec = winLossData.daily.find((d) => d.date === today);
+            const todayPnl = todayRec?.pnl ?? 0;
+
+            // Week = last 7 calendar days
+            const weekAgo = new Date();
+            weekAgo.setDate(weekAgo.getDate() - 7);
+            const weekStr = weekAgo.toISOString().slice(0, 10);
+            const weekPnl = winLossData.daily
+              .filter((d) => d.date >= weekStr)
+              .reduce((sum, d) => sum + (d.pnl ?? 0), 0);
+
+            // All-time from stats (Kalshi settlements = most accurate)
+            const allTimePnl = statsData?.netPnl ?? winLossData.netPnl ?? 0;
+
+            return (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 16 }}>
+                <Card>
+                  <p style={{ fontSize: 11, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    Today&apos;s P&amp;L
+                  </p>
+                  <p style={{ fontSize: 24, fontWeight: 700, color: pnlColor(todayPnl), marginTop: 4, fontFamily: "monospace" }}>
+                    {todayPnl >= 0 ? "+" : ""}{fmt$(todayPnl)}
+                  </p>
+                </Card>
+                <Card>
+                  <p style={{ fontSize: 11, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    This Week
+                  </p>
+                  <p style={{ fontSize: 24, fontWeight: 700, color: pnlColor(weekPnl), marginTop: 4, fontFamily: "monospace" }}>
+                    {weekPnl >= 0 ? "+" : ""}{fmt$(weekPnl)}
+                  </p>
+                </Card>
+                <Card>
+                  <p style={{ fontSize: 11, color: css.textSecondary, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    All-Time P&amp;L
+                  </p>
+                  <p style={{ fontSize: 24, fontWeight: 700, color: pnlColor(allTimePnl), marginTop: 4, fontFamily: "monospace" }}>
+                    {allTimePnl >= 0 ? "+" : ""}{fmt$(allTimePnl)}
+                  </p>
+                </Card>
+              </div>
+            );
+          })()
         )}
 
         {/* ── SECTION 2: OPEN POSITIONS WITH VERDICTS ── */}
