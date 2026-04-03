@@ -110,6 +110,7 @@ const TAKE_PROFIT_PCT = 25;    // Sell when position is up 25%+
 const STOP_LOSS_PCT = -40;     // Sell when position is down 40%+
 const DAILY_PROFIT_TARGET = 3.00; // Stop trading after +$3 daily P&L
 const DAILY_LOSS_LIMIT = -5.00;   // Stop trading after -$5 daily P&L
+const TRIGGER_MINUTES_REMAINING = 30; // Only trade daysLeft=0 markets within 30m of expiry
 
 // ---------------------------------------------------------------------------
 // Dynamic position sizing — scales with bankroll + Claude confidence
@@ -2033,6 +2034,17 @@ async function pollKalshi(): Promise<void> {
 
         // Log only crypto markets that survive all filters (volume + distance + price + direction)
         console.log(`  🪙 CRYPTO PASS: ${m.ticker} daysLeft=${daysLeft} confThreshold=${confThreshold}% YES=${yesCents}c`);
+
+        // Trigger-minute filter: only evaluate daysLeft=0 markets within 30m of expiry
+        if (daysLeft === 0) {
+          const expiryMs = new Date((m.close_time ?? m.expiration_time ?? m.end_date_iso ?? "") as string).getTime();
+          const minutesRemaining = Math.round((expiryMs - Date.now()) / 1000 / 60);
+          if (minutesRemaining > TRIGGER_MINUTES_REMAINING) {
+            console.log(`  ⏱️ SKIP: ${m.ticker} too early (${minutesRemaining}m remaining > ${TRIGGER_MINUTES_REMAINING}m window)`);
+            totalFiltered++;
+            continue;
+          }
+        }
       }
 
       // Categorize for labeling (not filtering — let Claude decide)
