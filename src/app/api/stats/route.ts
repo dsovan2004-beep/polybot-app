@@ -92,13 +92,15 @@ export async function GET() {
     });
 
     const trades = realSettled.map((p) => {
-      const pnl = Number(p.realized_pnl ?? 0); // cents
+      const payout = Number(p.realized_pnl ?? 0); // cents received back
+      const cost = Number(p.total_traded ?? 0);    // cents spent
+      const pnl = payout - cost;                    // net P&L in cents
       netPnlCents += pnl;
 
-      // Determine win/loss from realized_pnl:
-      //   positive pnl = WIN (we made money)
-      //   negative pnl = LOSS (we lost money)
-      //   zero pnl with trades = breakeven (count as win — we got our money back)
+      // Determine win/loss from net P&L:
+      //   positive = WIN (payout > cost)
+      //   negative = LOSS (payout < cost)
+      //   zero = breakeven (count as win)
       const isWin = pnl >= 0;
       if (isWin) wins++;
       else losses++;
