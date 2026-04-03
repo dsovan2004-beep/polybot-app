@@ -1856,7 +1856,7 @@ async function pollKalshi(): Promise<void> {
         const threshold = getDynamicConfidenceThreshold(daysLeft);
         if (threshold === null) {
           if (daysLeft > MAX_EXPIRY_DAYS) {
-            console.log(`  ⏰ SKIP: ${m.ticker} expires in ${daysLeft} days (>180 day cap)`);
+            // Suppressed: non-crypto expiry skip log (crypto-only mode — too noisy)
           }
           skippedExpiry++;
           totalFiltered++;
@@ -1873,7 +1873,7 @@ async function pollKalshi(): Promise<void> {
           continue;
         }
 
-        console.log(`  📅 ${m.ticker} daysLeft=${daysLeft} confThreshold=${confThreshold}%`);
+        // Suppressed: non-crypto daysLeft log (crypto-only mode — too noisy)
       }
 
       // Price — use last_price_dollars (most reliable from events endpoint)
