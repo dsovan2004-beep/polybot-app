@@ -110,7 +110,7 @@ const TAKE_PROFIT_PCT = 25;    // Sell when position is up 25%+
 const STOP_LOSS_PCT = -40;     // Sell when position is down 40%+
 const DAILY_PROFIT_TARGET = 3.00; // Stop trading after +$3 daily P&L
 const DAILY_LOSS_LIMIT = -5.00;   // Stop trading after -$5 daily P&L
-const TRIGGER_MINUTES_REMAINING = 30; // Only trade daysLeft=0 markets within 30m of expiry
+const TRIGGER_MINUTES_REMAINING = 15; // Only trade daysLeft=0 markets within 15m of expiry
 
 // ---------------------------------------------------------------------------
 // Dynamic position sizing — scales with bankroll + Claude confidence
