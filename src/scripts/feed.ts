@@ -1698,6 +1698,7 @@ async function fetchLiveCryptoPrices(): Promise<CryptoPrices | null> {
 // ---------------------------------------------------------------------------
 // Kalshi polling loop
 // ---------------------------------------------------------------------------
+const fadedTickers = new Set<string>(); // Tracks tickers already fade-traded this session
 
 async function pollKalshi(): Promise<void> {
   totalPolled++;
@@ -2044,6 +2045,27 @@ async function pollKalshi(): Promise<void> {
             totalFiltered++;
             continue;
           }
+        }
+      }
+
+      // Fade-extreme: 15M markets with YES >= 85¢ → auto-trade NO without Claude
+      const is15MMarket = m.ticker.includes('15M');
+      if (is15MMarket && yesPrice >= 0.85) {
+        const fadeNoCents = 100 - Math.round(yesPrice * 100);
+        if (fadeNoCents >= 10 && fadeNoCents <= 55) {
+          if (fadedTickers.has(m.ticker)) {
+            console.log(`  ⏭️ SKIP: ${m.ticker} already fade-traded this session`);
+            continue;
+          }
+          console.log(`  🎯 FADE-EXTREME: ${m.ticker} YES=${Math.round(yesPrice * 100)}c → buying NO at ${fadeNoCents}c`);
+          fadedTickers.add(m.ticker);
+          const fadeMarketId = await saveMarket(m, yesPrice);
+          if (fadeMarketId) {
+            totalSaved++;
+            processed++;
+            await autoExecTrade(m.ticker, "no", fadeMarketId, "fade-extreme", 90, yesPrice, true, cryptoPrices);
+          }
+          continue; // Skip Claude — already traded
         }
       }
 
