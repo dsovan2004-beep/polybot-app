@@ -82,25 +82,27 @@ export async function GET() {
 
     let wins = 0;
     let losses = 0;
-    let netPnlCents = 0;
+    let netPnlDollars = 0;
 
     // Filter out zero-exposure settled positions (settled but not truly traded)
+    // Use *_dollars fields — confirmed field names from Kalshi API (see feed.ts L891-892)
     const realSettled = settled.filter((p) => {
-      const pnl = Number(p.realized_pnl ?? 0);
-      const totalTraded = Number(p.total_traded ?? 0);
-      return pnl !== 0 || totalTraded > 0;
+      const payout = Number(p.realized_pnl_dollars ?? 0);
+      const cost = Number(p.total_traded_dollars ?? 0);
+      return payout !== 0 || cost > 0;
     });
 
     const trades = realSettled.map((p) => {
-      const payout = Number(p.realized_pnl ?? 0); // cents received back
-      const cost = Number(p.total_traded ?? 0);    // cents spent
-      const pnl = payout - cost;                    // net P&L in cents
-      netPnlCents += pnl;
+      // Kalshi realized_pnl_dollars = payout received (0 for losses, >cost for wins)
+      // Kalshi total_traded_dollars = cost basis (what we paid)
+      // Net P&L = payout - cost
+      const payout = Number(p.realized_pnl_dollars ?? 0);
+      const cost = Number(p.total_traded_dollars ?? 0);
+      const pnl = payout - cost; // dollars
 
-      // Determine win/loss from net P&L:
-      //   positive = WIN (payout > cost)
-      //   negative = LOSS (payout < cost)
-      //   zero = breakeven (count as win)
+      netPnlDollars += pnl;
+
+      // Win = net positive, Loss = net negative, Breakeven = zero
       const isWin = pnl >= 0;
       if (isWin) wins++;
       else losses++;
@@ -115,7 +117,7 @@ export async function GET() {
         title,
         side,
         result: isWin ? "WIN" : "LOSS",
-        pnl: Math.round(pnl) / 100, // cents → dollars
+        pnl: Math.round(pnl * 100) / 100, // round to cents
       };
     });
 
@@ -125,6 +127,17 @@ export async function GET() {
     // Return last 10 trades (most recent first)
     const recentTrades = trades.slice(-10).reverse();
 
+    // Debug: raw sums for diagnosing P&L
+    const debugPayoutSum = realSettled.reduce((s, p) => s + Number(p.realized_pnl_dollars ?? 0), 0);
+    const debugCostSum = realSettled.reduce((s, p) => s + Number(p.total_traded_dollars ?? 0), 0);
+    const debugSample = realSettled.slice(0, 3).map((p) => ({
+      ticker: String(p.ticker ?? ""),
+      realized_pnl_dollars: p.realized_pnl_dollars,
+      total_traded_dollars: p.total_traded_dollars,
+      realized_pnl: p.realized_pnl,
+      total_traded: p.total_traded,
+    }));
+
     return Response.json({
       ok: true,
       data: {
@@ -132,8 +145,16 @@ export async function GET() {
         wins,
         losses,
         winRate: Math.round(winRate * 1000) / 1000,
-        netPnl: Math.round(netPnlCents) / 100,
+        netPnl: Math.round(netPnlDollars * 100) / 100,
         recentTrades,
+      },
+      debug: {
+        settledCount: settled.length,
+        realSettledCount: realSettled.length,
+        payoutSum: Math.round(debugPayoutSum * 100) / 100,
+        costSum: Math.round(debugCostSum * 100) / 100,
+        netPnlRaw: Math.round(netPnlDollars * 100) / 100,
+        samplePositions: debugSample,
       },
     });
   } catch (err) {
