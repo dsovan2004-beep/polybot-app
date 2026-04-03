@@ -11,7 +11,10 @@ import { sendTradeAlert, sendKillSwitchAlert } from "@/lib/telegram";
 
 export const runtime = "edge";
 
-const MAX_TRADE_SIZE = 10; // $10 max for first 30 trades
+// Position sizing — matches feed.ts calculateTradeSize() exactly
+const POSITION_SIZE_PCT = 0.03;       // 3% of balance per trade
+const MIN_TRADE_DOLLARS = 0.50;       // Floor
+const MAX_TRADE_DOLLARS_CAP = 15.00;  // Ceiling
 
 // ---------------------------------------------------------------------------
 // POST /api/trade
@@ -92,28 +95,36 @@ export async function POST(request: Request) {
       );
     }
 
-    // ---- 4. Calculate trade size ----
+    // ---- 4. Calculate trade size (matches feed.ts calculateTradeSize) ----
     debug.step = "calculate-size";
-    let tradeSize = MAX_TRADE_SIZE;
+    const confidence = Number(signal.confidence ?? 67);
+    let tradeSize = MAX_TRADE_DOLLARS_CAP; // fallback
 
     if (!paperTrade && kalshiApiKey && kalshiPrivateKey) {
       try {
         const bal = await getBalance(kalshiApiKey, kalshiPrivateKey);
         debug.kalshiBalance = bal.balance;
-        const fivePct = bal.balance * 0.05;
-        tradeSize = Math.min(fivePct, MAX_TRADE_SIZE);
+        const base = bal.balance * POSITION_SIZE_PCT;
+        let multiplier = 0.55;
+        if (confidence >= 90) multiplier = 1.0;
+        else if (confidence >= 80) multiplier = 0.85;
+        else if (confidence >= 70) multiplier = 0.70;
+        let sized = base * multiplier;
+        sized = Math.max(MIN_TRADE_DOLLARS, sized);
+        sized = Math.min(MAX_TRADE_DOLLARS_CAP, sized);
+        tradeSize = Math.round(sized * 100) / 100;
       } catch (balErr) {
         debug.balanceError =
           balErr instanceof Error ? balErr.message : String(balErr);
-        tradeSize = MAX_TRADE_SIZE;
+        tradeSize = MAX_TRADE_DOLLARS_CAP;
       }
     }
 
     debug.tradeSize = tradeSize;
 
-    if (tradeSize < 1) {
+    if (tradeSize < MIN_TRADE_DOLLARS) {
       return Response.json(
-        { ok: false, error: "Insufficient balance (< $1)", debug },
+        { ok: false, error: `Insufficient balance (< $${MIN_TRADE_DOLLARS})`, debug },
         { status: 400 }
       );
     }
