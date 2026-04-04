@@ -427,7 +427,8 @@ Rules:
 - Your confidence should reflect how much evidence supports your specific probability estimate
 - Markets where you lack information should score 10-30, not cluster at 45
 - Markets where you have a clear view should score 55-80+
-- Consider: base rates, recent news, time to expiration, market efficiency, and your information edge`;
+- Consider: base rates, recent news, time to expiration, market efficiency, and your information edge
+- CRITICAL: When LIVE MARKET DATA or DIRECTION CONTEXT is provided, you MUST use it. The current coin price and strike price are REAL-TIME — base your probability on whether the coin can realistically move from the current price to the strike before expiry. Never say "no price data available" when prices are provided in the prompt.`;
 
 const analyzedMarkets = new Set<string>();
 
