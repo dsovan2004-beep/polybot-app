@@ -1698,7 +1698,8 @@ async function fetchLiveCryptoPrices(): Promise<CryptoPrices | null> {
 // ---------------------------------------------------------------------------
 // Kalshi polling loop
 // ---------------------------------------------------------------------------
-const fadedTickers = new Set<string>(); // Tracks tickers already fade-traded this session
+const fadeCooldowns = new Map<string, number>(); // coin-level fade cooldown: 'BTC_15M_FADE' → expiry timestamp
+const FADE_COOLDOWN_MS = 60 * 60 * 1000; // 60-minute cooldown after a fade-extreme trade
 
 async function pollKalshi(): Promise<void> {
   totalPolled++;
@@ -2056,12 +2057,18 @@ async function pollKalshi(): Promise<void> {
       if (is15MMarket && yesPrice >= 0.90) {
         const fadeNoCents = 100 - Math.round(yesPrice * 100);
         if (fadeNoCents >= 10 && fadeNoCents <= 55) {
-          if (fadedTickers.has(m.ticker)) {
-            console.log(`  ⏭️ SKIP: ${m.ticker} already fade-traded this session`);
+          // Coin-level cooldown: extract coin prefix (e.g. 'BTC_15M_FADE' or 'ETH_15M_FADE')
+          const fadeCoinKey = m.ticker.startsWith('KXETH15M') ? 'ETH_15M_FADE'
+            : m.ticker.startsWith('KXBTC15M') ? 'BTC_15M_FADE'
+            : `OTHER_15M_FADE`;
+          const cooldownExpiry = fadeCooldowns.get(fadeCoinKey) ?? 0;
+          if (Date.now() < cooldownExpiry) {
+            const minsLeft = Math.round((cooldownExpiry - Date.now()) / 1000 / 60);
+            console.log(`  ⏭️ SKIP: ${m.ticker} fade cooldown active (${fadeCoinKey}, ${minsLeft}m remaining)`);
             continue;
           }
           console.log(`  🎯 FADE-EXTREME: ${m.ticker} YES=${Math.round(yesPrice * 100)}c → buying NO at ${fadeNoCents}c`);
-          fadedTickers.add(m.ticker);
+          fadeCooldowns.set(fadeCoinKey, Date.now() + FADE_COOLDOWN_MS);
           const fadeMarketId = await saveMarket(m, yesPrice);
           if (fadeMarketId) {
             totalSaved++;
