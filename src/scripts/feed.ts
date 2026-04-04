@@ -2015,9 +2015,9 @@ async function pollKalshi(): Promise<void> {
         }
 
         // YES price range filter — skip extremes
-        // Exception: 15M tickers with YES >= 85c bypass this filter (fade-extreme candidates)
+        // Exception: 15M tickers with YES >= 90c bypass this filter (fade-extreme candidates)
         const yesCents = Math.round(yesPrice * 100);
-        const is15MFadeCandidate = m.ticker.includes('15M') && yesCents >= 85;
+        const is15MFadeCandidate = m.ticker.includes('15M') && yesCents >= 90;
         if (!is15MFadeCandidate && (yesCents < 10 || yesCents > 55)) {
           console.log(`  💰 SKIP: ${m.ticker} YES price ${yesCents}c outside 10c-55c range`);
           totalFiltered++;
@@ -2051,9 +2051,9 @@ async function pollKalshi(): Promise<void> {
         }
       }
 
-      // Fade-extreme: 15M markets with YES >= 85¢ → auto-trade NO without Claude
+      // Fade-extreme: 15M markets with YES >= 90¢ → auto-trade NO without Claude
       const is15MMarket = m.ticker.includes('15M');
-      if (is15MMarket && yesPrice >= 0.85) {
+      if (is15MMarket && yesPrice >= 0.90) {
         const fadeNoCents = 100 - Math.round(yesPrice * 100);
         if (fadeNoCents >= 10 && fadeNoCents <= 55) {
           if (fadedTickers.has(m.ticker)) {
