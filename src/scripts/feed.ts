@@ -2015,8 +2015,10 @@ async function pollKalshi(): Promise<void> {
         }
 
         // YES price range filter — skip extremes
+        // Exception: 15M tickers with YES >= 85c bypass this filter (fade-extreme candidates)
         const yesCents = Math.round(yesPrice * 100);
-        if (yesCents < 10 || yesCents > 55) {
+        const is15MFadeCandidate = m.ticker.includes('15M') && yesCents >= 85;
+        if (!is15MFadeCandidate && (yesCents < 10 || yesCents > 55)) {
           console.log(`  💰 SKIP: ${m.ticker} YES price ${yesCents}c outside 10c-55c range`);
           totalFiltered++;
           continue;
@@ -2026,8 +2028,9 @@ async function pollKalshi(): Promise<void> {
         // NO price = 1.00 - YES price.  Only trade NO at 68-85¢.
         // 71-80¢: 88% WR, +$1.90 | 81-90¢: 69% WR, -$4.10 | 55-70¢: 44% WR, -$1.90
         // YES 15-32¢ → NO 68-85¢ = SWEET SPOT ✅
+        // Exception: 15M fade candidates also bypass sweet spot (they go straight to fade-extreme)
         const noCents = 100 - yesCents;
-        if (noCents < 68 || noCents > 85) {
+        if (!is15MFadeCandidate && (noCents < 68 || noCents > 85)) {
           console.log(`  💰 SKIP: ${m.ticker} NO price ${noCents}c outside sweet spot 68-85c`);
           totalFiltered++;
           continue;
