@@ -2058,6 +2058,22 @@ async function pollKalshi(): Promise<void> {
       if (is15MMarket && yesPrice >= 0.90) {
         const fadeNoCents = 100 - Math.round(yesPrice * 100);
         if (fadeNoCents >= 10 && fadeNoCents <= 55) {
+          // Direction check: only fade when strike is ABOVE current price
+          // If strike < current price, YES is correctly priced (coin already passed threshold)
+          if (cryptoPrices) {
+            const fadeThMatch = m.ticker.match(/-T([\d.]+)$/);
+            if (fadeThMatch) {
+              const fadeStrike = parseFloat(fadeThMatch[1]);
+              const tLower = m.ticker.toLowerCase();
+              let fadeCoinPrice = 0;
+              if (tLower.startsWith("kxbtc15m")) fadeCoinPrice = cryptoPrices.btc;
+              else if (tLower.startsWith("kxeth15m")) fadeCoinPrice = cryptoPrices.eth;
+              if (fadeCoinPrice > 0 && fadeStrike < fadeCoinPrice) {
+                console.log(`  ⬇️ FADE-SKIP: ${m.ticker} strike $${fadeStrike.toFixed(0)} already below current price $${fadeCoinPrice.toFixed(0)} — YES correctly priced`);
+                continue;
+              }
+            }
+          }
           // Coin-level cooldown: extract coin prefix (e.g. 'BTC_15M_FADE' or 'ETH_15M_FADE')
           const fadeCoinKey = m.ticker.startsWith('KXETH15M') ? 'ETH_15M_FADE'
             : m.ticker.startsWith('KXBTC15M') ? 'BTC_15M_FADE'
