@@ -1121,6 +1121,12 @@ async function analyzeMarket(
   if (killSwitchActive || !anthropic) return;
   if (analyzedMarkets.has(kalshiTicker)) return;
 
+  // Fix: If crypto market but Coinbase prices are null, skip and retry next poll
+  if (isCrypto && !cryptoPrices) {
+    console.log(`  ⏳ SKIP-RETRY: ${kalshiTicker} — cryptoPrices null, will retry next poll`);
+    return; // Do NOT add to analyzedMarkets — allows retry
+  }
+
   analyzedMarkets.add(kalshiTicker);
   console.log(`  🔄 Claude → ${title.slice(0, 60)}...`);
 
@@ -1153,7 +1159,27 @@ Volume: $${volume.toLocaleString()}${btcPrice ? `\nCurrent BTC price: $${btcPric
       })()
     }${
       (() => {
-        if (!cryptoPrices || !isCrypto) return "";
+        if (!isCrypto) return "";
+        // Fallback: if cryptoPrices is null but btcPrice (Binance) is available, inject for BTC tickers
+        if (!cryptoPrices) {
+          if (btcPrice) {
+            const t = kalshiTicker.toLowerCase();
+            if (t.startsWith("kxbtcd") || t.startsWith("kxbtc15m")) {
+              const thMatch = kalshiTicker.match(/-T([\d.]+)$/);
+              if (thMatch) {
+                const strike = parseFloat(thMatch[1]);
+                const binPrice = parseFloat(btcPrice);
+                if (binPrice > 0) {
+                  const diff = strike - binPrice;
+                  const pct = ((diff / binPrice) * 100).toFixed(2);
+                  const dir = diff > 0 ? "UP" : "DOWN";
+                  return `\n\n--- DIRECTION CONTEXT (use this, do NOT guess) ---\nCurrent BTC price: $${binPrice.toLocaleString()} (Binance fallback)\nStrike price: $${strike.toLocaleString()}\nDirection: BTC must move ${dir} $${Math.abs(diff).toFixed(0)} (${diff > 0 ? "+" : ""}${pct}%) to reach the strike\nYou are evaluating a NO bet: you WIN if BTC does NOT reach $${strike.toLocaleString()} by expiry`;
+                }
+              }
+            }
+          }
+          return "";
+        }
         const t = kalshiTicker.toLowerCase();
         const thMatch = kalshiTicker.match(/-T([\d.]+)$/);
         if (!thMatch) return "";
