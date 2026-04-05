@@ -94,6 +94,7 @@ const PRICE_MIN = 0.02;
 const PRICE_MAX = 0.98;
 const POLL_INTERVAL_MS = 30_000; // 30 seconds
 const PAPER_MODE = false; // Set true to log trades without placing real orders
+const FADE_EXTREME_ENABLED = false; // NightShark disabled — all fade-extreme trades lost money
 const MIN_BALANCE_FLOOR = 5.00; // Never trade below this balance ($)
 
 // Dynamic position sizing — scales with bankroll + confidence
@@ -2045,7 +2046,7 @@ async function pollKalshi(): Promise<void> {
         // YES price range filter — skip extremes
         // Exception: 15M tickers with YES >= 90c bypass this filter (fade-extreme candidates)
         const yesCents = Math.round(yesPrice * 100);
-        const is15MFadeCandidate = m.ticker.includes('15M') && yesCents >= 90;
+        const is15MFadeCandidate = FADE_EXTREME_ENABLED && m.ticker.includes('15M') && yesCents >= 90;
         if (!is15MFadeCandidate && (yesCents < 10 || yesCents > 55)) {
           console.log(`  💰 SKIP: ${m.ticker} YES price ${yesCents}c outside 10c-55c range`);
           totalFiltered++;
@@ -2081,7 +2082,7 @@ async function pollKalshi(): Promise<void> {
 
       // Fade-extreme: 15M markets with YES >= 90¢ → auto-trade NO without Claude
       const is15MMarket = m.ticker.includes('15M');
-      if (is15MMarket && yesPrice >= 0.90) {
+      if (FADE_EXTREME_ENABLED && is15MMarket && yesPrice >= 0.90) {
         const fadeNoCents = 100 - Math.round(yesPrice * 100);
         if (fadeNoCents >= 10 && fadeNoCents <= 55) {
           // Direction check: only fade when strike is ABOVE current price
@@ -2284,6 +2285,7 @@ setInterval(checkAutoKillSwitch, 300_000);
 console.log("═══════════════════════════════════════");
 console.log("  PolyBot Feed — Kalshi → Supabase");
 console.log(`  Polling every ${POLL_INTERVAL_MS / 1000}s`);
+if (!FADE_EXTREME_ENABLED) console.log("  🚫 FADE-EXTREME DISABLED (NightShark off)");
 console.log("═══════════════════════════════════════");
 
 selfTest()
