@@ -562,6 +562,12 @@ async function autoExecTrade(
       return;
     }
 
+    // Safety Check 2.5 — Sweet spot re-check at live price (prevents 1¢ drift past filter)
+    if (side === "no" && priceCents > 85) {
+      console.log(`  🚫 SKIP AUTO-EXEC: ${kalshiTicker} live NO price ${priceCents}c exceeds 85c sweet spot ceiling`);
+      return;
+    }
+
     // Safety Check 3 — Dynamic trade cost check
     const tradeCostPerContract = priceCents / 100;
     if (tradeCostPerContract > dynamicTradeSize) {
