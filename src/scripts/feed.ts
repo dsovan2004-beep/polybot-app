@@ -978,25 +978,28 @@ async function syncSettledTrades(): Promise<void> {
         continue;
       }
 
-      // Determine outcome:
-      //   positive pnl = win, negative = loss, zero with trades = breakeven (win)
-      const outcome = pnlDollars >= 0 ? "win" : "loss";
+      // Determine outcome using NET P&L (payout minus cost):
+      //   realized_pnl_dollars = gross payout (0 for losses, >0 for wins)
+      //   total_traded_dollars = cost basis (what we paid)
+      //   net P&L = payout - cost
+      const pnlNet = Math.round((pnlDollars - totalTraded) * 100) / 100;
+      const outcome = pnlNet >= 0 ? "win" : "loss";
 
       const { error: updateErr } = await supabase
         .from("trades")
         .update({
           status: "closed",
           outcome,
-          pnl: pnlDollars,
+          pnl: pnlNet,
           exit_at: new Date().toISOString(),
-          notes: `SETTLED: ${ticker} | P&L: ${pnlDollars >= 0 ? "+" : ""}$${pnlDollars.toFixed(2)}`,
+          notes: `SETTLED: ${ticker} | P&L: ${pnlNet >= 0 ? "+" : ""}$${pnlNet.toFixed(2)}`,
         })
         .eq("id", tradeRow.id);
 
       if (!updateErr) {
         synced++;
         const emoji = outcome === "win" ? "✅" : "❌";
-        console.log(`  ${emoji} SETTLED: ${ticker} → ${outcome} (${pnlDollars >= 0 ? "+" : ""}$${pnlDollars.toFixed(2)})`);
+        console.log(`  ${emoji} SETTLED: ${ticker} → ${outcome} (${pnlNet >= 0 ? "+" : ""}$${pnlNet.toFixed(2)})`);
       }
     }
 
@@ -1009,7 +1012,7 @@ async function syncSettledTrades(): Promise<void> {
     // ═══════════════════════════════════════════════════════════════
     const { data: unresolvedTrades } = await supabase
       .from("trades")
-      .select("id, direction, notes, entry_price, shares")
+      .select("id, direction, notes, entry_price, shares, entry_cost")
       .is("outcome", null)
       .like("notes", "AUTO-EXEC:%")
       .limit(100);
@@ -1063,11 +1066,13 @@ async function syncSettledTrades(): Promise<void> {
           }
 
           // Calculate P&L: win = payout - cost, loss = -cost
+          // Use stored entry_cost (actual cost paid) — entry_price is YES price which is
+          // wrong for NO trades. Fallback to entry_price * shares only if entry_cost missing.
           const entryPrice = parseFloat(String(trade.entry_price ?? "0"));
           const shares = parseInt(String(trade.shares ?? "0"), 10);
-          const entryCost = entryPrice * shares;
+          const entryCost = parseFloat(String(trade.entry_cost ?? "0")) || (entryPrice * shares);
           const pnl = outcome === "win"
-            ? (1.0 * shares) - entryCost  // $1 payout per share minus cost
+            ? (1.0 * shares) - entryCost  // $1 payout per share minus actual cost
             : -entryCost;                   // lost the entry cost
 
           const { error: updateErr } = await supabase
