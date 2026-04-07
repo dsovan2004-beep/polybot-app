@@ -982,7 +982,7 @@ async function syncSettledTrades(): Promise<void> {
       //   realized_pnl_dollars = NET P&L from Kalshi (already payout minus cost)
       //   DO NOT subtract total_traded_dollars again — that double-counts the cost
       const pnlNet = Math.round(pnlDollars * 100) / 100;
-      const outcome = pnlNet >= 0 ? "win" : "loss";
+      const outcome = pnlNet > 0 ? "win" : "loss";
 
       const { error: updateErr } = await supabase
         .from("trades")
@@ -1740,6 +1740,7 @@ const fadeCooldowns = new Map<string, number>(); // coin-level fade cooldown: 'B
 const FADE_COOLDOWN_MS = 60 * 60 * 1000; // 60-minute cooldown after a fade-extreme trade
 
 async function pollKalshi(): Promise<void> {
+  analyzedMarkets.clear(); // Reset per poll — allow re-evaluation as conditions change
   totalPolled++;
   console.log(`\n🔄 Poll #${totalPolled} — fetching Kalshi events...`);
 
