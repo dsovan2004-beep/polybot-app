@@ -93,12 +93,9 @@ export async function GET() {
     });
 
     const trades = realSettled.map((p) => {
-      // Kalshi realized_pnl_dollars = payout received (0 for losses, >cost for wins)
-      // Kalshi total_traded_dollars = cost basis (what we paid)
-      // Net P&L = payout - cost
-      const payout = Number(p.realized_pnl_dollars ?? 0);
-      const cost = Number(p.total_traded_dollars ?? 0);
-      const pnl = payout - cost; // dollars
+      // Kalshi realized_pnl_dollars = NET P&L (already payout minus cost)
+      // DO NOT subtract total_traded_dollars again — that double-counts the cost
+      const pnl = Number(p.realized_pnl_dollars ?? 0); // dollars (already net)
 
       netPnlDollars += pnl;
 

@@ -978,11 +978,10 @@ async function syncSettledTrades(): Promise<void> {
         continue;
       }
 
-      // Determine outcome using NET P&L (payout minus cost):
-      //   realized_pnl_dollars = gross payout (0 for losses, >0 for wins)
-      //   total_traded_dollars = cost basis (what we paid)
-      //   net P&L = payout - cost
-      const pnlNet = Math.round((pnlDollars - totalTraded) * 100) / 100;
+      // Determine outcome using realized_pnl_dollars directly:
+      //   realized_pnl_dollars = NET P&L from Kalshi (already payout minus cost)
+      //   DO NOT subtract total_traded_dollars again — that double-counts the cost
+      const pnlNet = Math.round(pnlDollars * 100) / 100;
       const outcome = pnlNet >= 0 ? "win" : "loss";
 
       const { error: updateErr } = await supabase
