@@ -930,6 +930,10 @@ async function syncSettledTrades(): Promise<void> {
       // Skip positions with no actual trades (legacy $0 positions)
       if (totalTraded <= 0 && pnlDollars === 0) continue;
 
+      // Skip positions still held (position_fp != 0 means not truly settled)
+      const positionFp = parseFloat(String(pos.position_fp ?? "0"));
+      if (positionFp !== 0) continue;
+
       // ── Primary: match via notes field (contains ticker directly) ──
       // Notes format: "AUTO-EXEC: {orderId} | {ticker} | conf:{n}% | ..."
       const { data: tradeByNotes } = await supabase
