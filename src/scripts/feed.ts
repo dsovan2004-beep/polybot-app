@@ -203,18 +203,25 @@ async function kalshiFetch<T>(
   };
 
   const url = `${KALSHI_HOST}${fullPath}`;
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const res = await fetch(url, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`Kalshi ${method} ${fullPath} → ${res.status}: ${errText.slice(0, 300)}`);
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`Kalshi ${method} ${fullPath} → ${res.status}: ${errText.slice(0, 300)}`);
+    }
+
+    return res.json() as Promise<T>;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return res.json() as Promise<T>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1704,7 +1711,7 @@ async function buildMemoryContext(): Promise<string> {
       const settledData = await kalshiFetch<{
         market_positions: {
           ticker: string;
-          realized_pnl: string;
+          realized_pnl_dollars: string;
           market_exposure_dollars: string;
           position_fp: string;
         }[];
@@ -1726,7 +1733,7 @@ async function buildMemoryContext(): Promise<string> {
 
         const trades: SettledTrade[] = [];
         for (const s of settled) {
-          const pnl = parseFloat(String(s.realized_pnl ?? "0"));
+          const pnl = parseFloat(String(s.realized_pnl_dollars ?? "0"));
           const t = s.ticker.toLowerCase();
 
           // Determine coin from ticker
@@ -2082,6 +2089,13 @@ const FADE_COOLDOWN_MS = 60 * 60 * 1000; // 60-minute cooldown after a fade-extr
 
 async function pollKalshi(): Promise<void> {
   analyzedMarkets.clear(); // Reset per poll — allow re-evaluation as conditions change
+
+  // Purge expired fade cooldowns (prevents unbounded memory growth over days of runtime)
+  const now = Date.now();
+  for (const [key, expiry] of fadeCooldowns) {
+    if (now >= expiry) fadeCooldowns.delete(key);
+  }
+
   totalPolled++;
   console.log(`\n🔄 Poll #${totalPolled} — fetching Kalshi events...`);
 
@@ -2099,8 +2113,8 @@ async function pollKalshi(): Promise<void> {
       console.warn("  ⚠️  BTC price fetch failed — continuing without it");
     }
 
-    // Fetch live crypto prices for updown markets (Coinbase, once per cycle)
-    const cryptoPrices = await fetchLiveCryptoPrices();
+    // Fetch live crypto prices for updown markets (Coinbase — refreshed per market below)
+    let cryptoPrices = await fetchLiveCryptoPrices();
 
     // Check open positions for take-profit opportunities (before new analysis)
     await checkAndSellPositions();
@@ -2487,6 +2501,11 @@ async function pollKalshi(): Promise<void> {
       console.log(
         `  📈 ${m.ticker} | ${(yesPrice * 100).toFixed(0)}c | vol:${vol24h} | [${category}] ${m.title.slice(0, 50)}`
       );
+
+      // Re-fetch live crypto prices before each analysis (H1 fix: prices can move during loop)
+      const freshPrices = await fetchLiveCryptoPrices();
+      if (freshPrices) cryptoPrices = freshPrices;
+      // else: keep last known cryptoPrices (stale > missing)
 
       // Analyze with 5-agent swarm (confThreshold from tiered expiry system)
       const expirationRaw = String(m.close_time ?? m.expiration_time ?? m.end_date_iso ?? "");
