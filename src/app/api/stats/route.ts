@@ -99,8 +99,8 @@ export async function GET() {
 
       netPnlDollars += pnl;
 
-      // Win = net positive, Loss = net negative, Breakeven = zero
-      const isWin = pnl >= 0;
+      // Win = net positive, Loss = net negative or breakeven ($0 pnl = loss, not win)
+      const isWin = pnl > 0;
       if (isWin) wins++;
       else losses++;
 

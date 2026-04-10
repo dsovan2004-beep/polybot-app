@@ -565,7 +565,7 @@ async function swarmAnalyzeMarket(
     return;
   }
 
-  analyzedMarkets.add(kalshiTicker);
+  // NOTE: analyzedMarkets.add() moved to AFTER signal save (prevents permanent block on Claude failure)
   console.log(`  🧠 SWARM → ${title.slice(0, 60)}...`);
 
   try {
@@ -728,8 +728,9 @@ Should we place a NO bet on this market?`;
     const { error } = await supabase.from("signals").insert(signalPayload);
     if (error) {
       console.error("  ❌ Signal save failed:", error.message);
-      return;
+      return; // Don't mark as analyzed — allows retry
     }
+    analyzedMarkets.add(kalshiTicker); // Only mark analyzed AFTER successful save
     totalSignals++;
 
     // Auto-exec for actionable signals
@@ -1477,7 +1478,7 @@ async function analyzeMarket(
     return; // Do NOT add to analyzedMarkets — allows retry
   }
 
-  analyzedMarkets.add(kalshiTicker);
+  // NOTE: analyzedMarkets.add() moved to AFTER signal save (prevents permanent block on Claude failure)
   console.log(`  🔄 Claude → ${title.slice(0, 60)}...`);
 
   try {
@@ -1625,8 +1626,9 @@ What is your analysis?`;
     const { error } = await supabase.from("signals").insert(signalPayload);
     if (error) {
       console.error("  ❌ Signal save failed:", error.message);
-      return;
+      return; // Don't mark as analyzed — allows retry
     }
+    analyzedMarkets.add(kalshiTicker); // Only mark analyzed AFTER successful save
 
     totalSignals++;
     const voteColor = finalVote === "YES" ? "🟢" : finalVote === "NO" ? "🔴" : "⚪";
@@ -2638,16 +2640,40 @@ console.log(`  Polling every ${POLL_INTERVAL_MS / 1000}s`);
 if (!FADE_EXTREME_ENABLED) console.log("  🚫 FADE-EXTREME DISABLED (NightShark off)");
 console.log("═══════════════════════════════════════");
 
+let isPolling = false;
+
 selfTest()
   .then(async () => {
     // First poll immediately
     await pollKalshi();
-    // Then poll on interval
-    setInterval(pollKalshi, POLL_INTERVAL_MS);
+    // Then poll on interval with lock guard to prevent overlapping polls
+    setInterval(async () => {
+      if (isPolling) {
+        console.warn("⚠️  Poll skipped — previous poll still running");
+        return;
+      }
+      isPolling = true;
+      try {
+        await pollKalshi();
+      } finally {
+        isPolling = false;
+      }
+    }, POLL_INTERVAL_MS);
     console.log(`\n👀 Watching Kalshi markets every ${POLL_INTERVAL_MS / 1000}s...\n`);
   })
   .catch((err) => {
     console.error("❌ Self-test crashed:", err);
     console.log("Starting feed anyway...\n");
-    setInterval(pollKalshi, POLL_INTERVAL_MS);
+    setInterval(async () => {
+      if (isPolling) {
+        console.warn("⚠️  Poll skipped — previous poll still running");
+        return;
+      }
+      isPolling = true;
+      try {
+        await pollKalshi();
+      } finally {
+        isPolling = false;
+      }
+    }, POLL_INTERVAL_MS);
   });
