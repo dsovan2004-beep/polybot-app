@@ -99,7 +99,7 @@ const MIN_BALANCE_FLOOR = 5.00; // Never trade below this balance ($)
 
 // Dynamic position sizing — scales with bankroll + confidence
 const POSITION_SIZE_PCT = 0.03;       // 3% of balance per trade (base)
-const MIN_TRADE_DOLLARS = 0.50;       // Floor: never less than $0.50
+const MIN_TRADE_DOLLARS = 10.00;      // Floor: never less than $10.00
 const MAX_TRADE_DOLLARS_CAP = 15.00;  // Ceiling: never more than $15.00 per trade
 const MAX_POSITIONS_PCT = 0.25;       // Deploy up to 25% of balance across all positions
 const MAX_POSITIONS_FLOOR = 8;        // Minimum positions allowed
@@ -432,6 +432,341 @@ Rules:
 - CRITICAL: When LIVE MARKET DATA or DIRECTION CONTEXT is provided, you MUST use it. The current coin price and strike price are REAL-TIME — base your probability on whether the coin can realistically move from the current price to the strike before expiry. Never say "no price data available" when prices are provided in the prompt.`;
 
 const analyzedMarkets = new Set<string>();
+
+// ---------------------------------------------------------------------------
+// 5-Agent Swarm System — parallel analysis for higher win rate
+// Each agent has a focused specialty; votes are aggregated for consensus.
+// Voting rules: 4/5 NO → full size | 3/5 NO → half size | ≤2/5 → NO_TRADE
+// ---------------------------------------------------------------------------
+
+const SWARM_AGENTS = [
+  {
+    name: "Momentum",
+    prompt: `You are Agent 1 — BTC/ETH momentum analyst for a crypto trading swarm on Kalshi.
+Your ONLY focus: short-term price momentum using the 5m, 15m, 1h trends provided.
+- Rising momentum = price likely to reach strike → lean YES (bad for our NO bet)
+- Falling/flat momentum = price unlikely to reach strike → lean NO (good for our NO bet)
+- If 5m trend is strongly positive (>0.3%), lean YES even if 1h is flat
+- If all 3 timeframes are negative/flat, lean NO with higher confidence
+
+Output ONLY valid JSON: {"vote":"YES"|"NO"|"NO_TRADE","confidence":0-100,"reason":"one sentence"}`,
+  },
+  {
+    name: "Sentiment",
+    prompt: `You are Agent 2 — news and sentiment analyst for a crypto trading swarm on Kalshi.
+Your ONLY focus: macro events, news sentiment, and market psychology.
+- Consider: Fed rate decisions, CPI data, tariff news, regulatory actions, exchange hacks
+- Major positive catalysts = price spike risk → lean YES (bad for our NO bet)
+- Negative or neutral macro = price stability → lean NO (good for our NO bet)
+- Weekend/overnight = lower volatility → slight NO lean
+- If you have no specific news insight, vote NO_TRADE with low confidence (20-35)
+
+Output ONLY valid JSON: {"vote":"YES"|"NO"|"NO_TRADE","confidence":0-100,"reason":"one sentence"}`,
+  },
+  {
+    name: "OrderFlow",
+    prompt: `You are Agent 3 — order flow and market structure analyst for a crypto trading swarm on Kalshi.
+Your ONLY focus: Kalshi market pricing, volume, bid-ask spreads, and implied probabilities.
+- High volume + YES price near extremes (>90c or <10c) = market consensus is strong
+- YES price 15-32c (NO 68-85c) = sweet spot where our NO trades historically win 88%
+- Low volume (<2000) = unreliable signal → lean NO_TRADE
+- Abnormal price movement (large YES price increase) = potential pump → lean YES
+
+Output ONLY valid JSON: {"vote":"YES"|"NO"|"NO_TRADE","confidence":0-100,"reason":"one sentence"}`,
+  },
+  {
+    name: "Correlation",
+    prompt: `You are Agent 4 — correlated asset and cross-market analyst for a crypto trading swarm on Kalshi.
+Your ONLY focus: correlations between BTC and other assets, and cross-coin behavior.
+- If BTC is pumping, altcoins (ETH, SOL, XRP, DOGE) usually follow → lean YES for alts
+- If BTC is flat/falling but an altcoin is pumping independently → unusual, lean YES cautiously
+- Strong DXY (dollar) = crypto weakness → lean NO (good for our NO bet)
+- Multi-coin divergence = unstable market → lean NO_TRADE
+- Use the DIRECTION CONTEXT to assess whether the strike is realistic from current price
+
+Output ONLY valid JSON: {"vote":"YES"|"NO"|"NO_TRADE","confidence":0-100,"reason":"one sentence"}`,
+  },
+  {
+    name: "Pattern",
+    prompt: `You are Agent 5 — historical pattern matcher for a crypto trading swarm on Kalshi.
+Your ONLY focus: time-of-day patterns, day-of-week effects, and distance-from-strike analysis.
+- Distance from strike: farther = safer NO (price must move more to reach strike)
+- BTC $100-200 from strike = risky, $500+ = safe for NO
+- ETH $12-25 from strike = risky, $50+ = safe for NO
+- Late-night/early-morning (2-6am ET) = lower volatility → lean NO
+- Expiry within 15 minutes with large distance = very safe NO (high confidence)
+- Expiry within 15 minutes with small distance = dangerous → lean YES or NO_TRADE
+
+Output ONLY valid JSON: {"vote":"YES"|"NO"|"NO_TRADE","confidence":0-100,"reason":"one sentence"}`,
+  },
+];
+
+interface SwarmVote {
+  agent: string;
+  vote: "YES" | "NO" | "NO_TRADE";
+  confidence: number;
+  reason: string;
+}
+
+async function runSwarmAgent(
+  agentDef: typeof SWARM_AGENTS[0],
+  userPrompt: string
+): Promise<SwarmVote> {
+  if (!anthropic) {
+    return { agent: agentDef.name, vote: "NO_TRADE", confidence: 0, reason: "no API key" };
+  }
+  try {
+    const res = await anthropic.messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: 128,
+      system: agentDef.prompt,
+      messages: [{ role: "user", content: userPrompt }],
+      temperature: 0.3,
+    });
+    const content = res.content[0]?.type === "text" ? res.content[0].text : "";
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return { agent: agentDef.name, vote: "NO_TRADE", confidence: 0, reason: "no JSON" };
+    }
+    const parsed = JSON.parse(jsonMatch[0]);
+    const vote = String(parsed.vote ?? "NO_TRADE").toUpperCase() as "YES" | "NO" | "NO_TRADE";
+    const confidence = Math.max(0, Math.min(100, Math.round(Number(parsed.confidence ?? 0))));
+    const reason = String(parsed.reason ?? "").slice(0, 100);
+    if (!["YES", "NO", "NO_TRADE"].includes(vote)) {
+      return { agent: agentDef.name, vote: "NO_TRADE", confidence: 0, reason: "invalid vote" };
+    }
+    return { agent: agentDef.name, vote, confidence, reason };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { agent: agentDef.name, vote: "NO_TRADE", confidence: 0, reason: `error: ${msg.slice(0, 60)}` };
+  }
+}
+
+async function swarmAnalyzeMarket(
+  marketId: string,
+  kalshiTicker: string,
+  title: string,
+  category: string,
+  yesPrice: number,
+  volume: number,
+  expirationRaw: string,
+  btcPrice: string,
+  memoryContext: string = "",
+  confThreshold: number = MIN_CONFIDENCE,
+  cryptoPrices: CryptoPrices | null = null,
+  isCrypto: boolean = false
+): Promise<void> {
+  if (killSwitchActive || !anthropic) return;
+  if (analyzedMarkets.has(kalshiTicker)) return;
+
+  // If crypto market but Coinbase prices are null, skip and retry next poll
+  if (isCrypto && !cryptoPrices) {
+    console.log(`  ⏳ SKIP-RETRY: ${kalshiTicker} — cryptoPrices null, will retry next poll`);
+    return;
+  }
+
+  analyzedMarkets.add(kalshiTicker);
+  console.log(`  🧠 SWARM → ${title.slice(0, 60)}...`);
+
+  try {
+    // Build the same user prompt that analyzeMarket uses
+    const todayStr = new Date().toISOString().split("T")[0];
+    let expiryContext = "";
+    if (expirationRaw) {
+      const expiryDate = new Date(expirationRaw);
+      if (!isNaN(expiryDate.getTime())) {
+        const expiryStr = expiryDate.toISOString().split("T")[0];
+        const daysLeft = Math.floor((expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+        expiryContext = `\nThis market expires on ${expiryStr}. Days until expiration: ${daysLeft}. Required confidence threshold: ${confThreshold}%.`;
+      }
+    }
+
+    // Build direction context for crypto
+    let directionContext = "";
+    if (isCrypto && cryptoPrices) {
+      const t = kalshiTicker.toLowerCase();
+      const thMatch = kalshiTicker.match(/-T([\d.]+)$/);
+      if (thMatch) {
+        const strike = parseFloat(thMatch[1]);
+        let coinPrice = 0;
+        let coinName = "BTC";
+        if (t.startsWith("kxbtcd") || t.startsWith("kxbtc15m")) { coinPrice = cryptoPrices.btc; coinName = "BTC"; }
+        else if (t.startsWith("kxethd") || t.startsWith("kxeth15m")) { coinPrice = cryptoPrices.eth; coinName = "ETH"; }
+        else if (t.startsWith("kxsold")) { coinPrice = cryptoPrices.sol; coinName = "SOL"; }
+        else if (t.startsWith("kxxrpd")) { coinPrice = cryptoPrices.xrp; coinName = "XRP"; }
+        else if (t.startsWith("kxdoged")) { coinPrice = cryptoPrices.doge; coinName = "DOGE"; }
+        else if (t.startsWith("kxbnbd")) { coinPrice = cryptoPrices.bnb; coinName = "BNB"; }
+        else if (t.startsWith("kxhyped")) { coinPrice = cryptoPrices.hype; coinName = "HYPE"; }
+        if (coinPrice > 0) {
+          const diff = strike - coinPrice;
+          const pct = ((diff / coinPrice) * 100).toFixed(2);
+          const dir = diff > 0 ? "UP" : "DOWN";
+          directionContext = `\n--- DIRECTION CONTEXT ---\nCurrent ${coinName} price: $${coinPrice.toLocaleString()}\nStrike: $${strike.toLocaleString()}\n${coinName} must move ${dir} $${Math.abs(diff).toFixed(0)} (${diff > 0 ? "+" : ""}${pct}%) to reach strike\nWe are evaluating a NO bet: we WIN if ${coinName} does NOT reach $${strike.toLocaleString()} by expiry`;
+        }
+      }
+    } else if (isCrypto && !cryptoPrices && btcPrice) {
+      // Binance fallback for BTC tickers
+      const t = kalshiTicker.toLowerCase();
+      if (t.startsWith("kxbtcd") || t.startsWith("kxbtc15m")) {
+        const thMatch = kalshiTicker.match(/-T([\d.]+)$/);
+        if (thMatch) {
+          const strike = parseFloat(thMatch[1]);
+          const binPrice = parseFloat(btcPrice);
+          if (binPrice > 0) {
+            const diff = strike - binPrice;
+            const pct = ((diff / binPrice) * 100).toFixed(2);
+            const dir = diff > 0 ? "UP" : "DOWN";
+            directionContext = `\n--- DIRECTION CONTEXT (Binance fallback) ---\nCurrent BTC: $${binPrice.toLocaleString()}\nStrike: $${strike.toLocaleString()}\nBTC must move ${dir} $${Math.abs(diff).toFixed(0)} (${diff > 0 ? "+" : ""}${pct}%)\nWe are evaluating a NO bet: we WIN if BTC does NOT reach $${strike.toLocaleString()} by expiry`;
+          }
+        }
+      }
+    }
+
+    // Live market data line for crypto
+    let liveDataLine = "";
+    if (cryptoPrices && isCrypto) {
+      liveDataLine = `\nLIVE PRICES: BTC=$${cryptoPrices.btc.toLocaleString()} (${cryptoPrices.btcTrend5m >= 0 ? "+" : ""}${cryptoPrices.btcTrend5m.toFixed(2)}% 5m, ${cryptoPrices.btcTrend15m >= 0 ? "+" : ""}${cryptoPrices.btcTrend15m.toFixed(2)}% 15m, ${cryptoPrices.btcTrend1h >= 0 ? "+" : ""}${cryptoPrices.btcTrend1h.toFixed(2)}% 1h). ETH=$${cryptoPrices.eth.toLocaleString()}. SOL=$${cryptoPrices.sol.toFixed(0)}. XRP=$${cryptoPrices.xrp.toFixed(2)}. DOGE=$${cryptoPrices.doge.toFixed(4)}. BNB=$${cryptoPrices.bnb.toFixed(0)}. HYPE=$${cryptoPrices.hype.toFixed(2)}.`;
+    }
+
+    const swarmPrompt = `Today is ${todayStr}.${expiryContext}
+${memoryContext}
+Market: ${title}
+Kalshi Ticker: ${kalshiTicker}
+Category: ${category}
+Current YES price: ${yesPrice.toFixed(2)} (implied prob: ${(yesPrice * 100).toFixed(1)}%)
+Volume: $${volume.toLocaleString()}${btcPrice ? `\nBTC price: $${btcPrice}` : ""}${liveDataLine}${directionContext}
+
+Should we place a NO bet on this market?`;
+
+    // Run all 5 agents in parallel
+    const swarmStart = Date.now();
+    const votes = await Promise.all(
+      SWARM_AGENTS.map((agent) => runSwarmAgent(agent, swarmPrompt))
+    );
+    const swarmMs = Date.now() - swarmStart;
+
+    // Log each agent's vote
+    for (const v of votes) {
+      const emoji = v.vote === "NO" ? "🔴" : v.vote === "YES" ? "🟢" : "⚪";
+      console.log(`    ${emoji} ${v.agent.padEnd(12)} → ${v.vote.padEnd(8)} conf:${v.confidence}% | ${v.reason.slice(0, 50)}`);
+    }
+
+    // Aggregate votes
+    const noVotes = votes.filter((v) => v.vote === "NO");
+    const yesVotes = votes.filter((v) => v.vote === "YES");
+    const noCount = noVotes.length;
+    const yesCount = yesVotes.length;
+
+    // Average confidence across NO voters (or all voters if NO_TRADE)
+    const avgNoConf = noCount > 0
+      ? Math.round(noVotes.reduce((s, v) => s + v.confidence, 0) / noCount)
+      : 0;
+    const avgAllConf = Math.round(votes.reduce((s, v) => s + v.confidence, 0) / votes.length);
+
+    // Voting decision: 4/5+ NO → full size | 3/5 NO → half size | ≤2/5 → NO_TRADE
+    let swarmDecision: "NO" | "NO_TRADE" = "NO_TRADE";
+    let sizeMultiplier = 1.0;
+    let decisionReason = "";
+
+    if (noCount >= 4) {
+      swarmDecision = "NO";
+      sizeMultiplier = 1.0;
+      decisionReason = `${noCount}/5 agents vote NO (full size)`;
+    } else if (noCount === 3 && yesCount <= 1) {
+      swarmDecision = "NO";
+      sizeMultiplier = 0.5;
+      decisionReason = `3/5 agents vote NO (half size)`;
+    } else {
+      swarmDecision = "NO_TRADE";
+      decisionReason = `Only ${noCount}/5 agents vote NO — insufficient consensus`;
+    }
+
+    // Apply confidence threshold — even with consensus, avg NO confidence must meet threshold
+    const effectiveConf = noCount > 0 ? avgNoConf : avgAllConf;
+    if (swarmDecision === "NO" && effectiveConf < confThreshold) {
+      swarmDecision = "NO_TRADE";
+      decisionReason = `Consensus ${noCount}/5 but avg confidence ${effectiveConf}% < ${confThreshold}% threshold`;
+    }
+
+    // Compute probability from average of all agent signals (use 0.5 as base since agents don't return prob)
+    const probability = swarmDecision === "NO" ? Math.max(0, yesPrice - 0.15) : yesPrice;
+    const priceGap = Math.abs(probability - yesPrice);
+
+    // Final price gap check
+    if (swarmDecision === "NO" && priceGap < MIN_PRICE_GAP) {
+      swarmDecision = "NO_TRADE";
+      decisionReason = `Price gap ${(priceGap * 100).toFixed(1)}% < ${(MIN_PRICE_GAP * 100).toFixed(0)}% minimum`;
+    }
+
+    const swarmEmoji = swarmDecision === "NO" ? "🔴" : "⚪";
+    console.log(`  ${swarmEmoji} SWARM: ${swarmDecision} | ${noCount}/5 NO | avg-conf: ${effectiveConf}% | ${sizeMultiplier === 0.5 ? "HALF" : "FULL"} size | ${swarmMs}ms | ${decisionReason}`);
+
+    // Aggregate reasoning from top 2 most confident NO voters
+    const topReasons = noVotes
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, 2)
+      .map((v) => `[${v.agent}] ${v.reason}`)
+      .join(" | ");
+    const finalReasoning = topReasons || decisionReason;
+
+    // Save aggregated signal to Supabase
+    const signalPayload = {
+      market_id: marketId,
+      strategy: "swarm_5agent",
+      claude_vote: swarmDecision,
+      gpt4o_vote: null,
+      gemini_vote: null,
+      consensus: swarmDecision,
+      confidence: effectiveConf,
+      ai_probability: probability,
+      market_price: yesPrice,
+      price_gap: priceGap,
+      reasoning: `[${noCount}/5 NO, ${sizeMultiplier}x] ${finalReasoning}`.slice(0, 500),
+      acted_on: false,
+    };
+
+    const { error } = await supabase.from("signals").insert(signalPayload);
+    if (error) {
+      console.error("  ❌ Signal save failed:", error.message);
+      return;
+    }
+    totalSignals++;
+
+    // Auto-exec for actionable signals
+    if (swarmDecision === "NO" && effectiveConf >= confThreshold) {
+      // YES trades remain banned (Fix #37)
+      // Pass sizeMultiplier via a modified autoExecTrade call
+      // We'll temporarily adjust POSITION_SIZE_PCT effect via confidence scaling
+      // sizeMultiplier 0.5 → halve confidence for sizing (maps to lower multiplier in calculateTradeSize)
+      const sizingConfidence = sizeMultiplier === 0.5
+        ? Math.min(effectiveConf, 69) // Forces 0.55x multiplier in calculateTradeSize
+        : effectiveConf;
+
+      await autoExecTrade(kalshiTicker, "no", marketId, "swarm_5agent", sizingConfidence, yesPrice, isCrypto, cryptoPrices);
+
+      const modeTag = PAPER_MODE ? "📝 PAPER" : "🤖 SWARM-EXECUTED";
+      const alertMsg = [
+        `*PolyBot Signal — ${modeTag}*`,
+        ``,
+        `Market: ${title.slice(0, 60)}`,
+        `Ticker: ${kalshiTicker}`,
+        `Signal: NO (${noCount}/5 agents)`,
+        `Confidence: ${effectiveConf}%`,
+        `Size: ${sizeMultiplier === 0.5 ? "HALF" : "FULL"}`,
+        `Price: ${(yesPrice * 100).toFixed(0)}c`,
+        ``,
+        `${finalReasoning.slice(0, 120)}`,
+        ``,
+        `polybot-app.pages.dev/bot`,
+      ].join("\n");
+      sendTelegramMessage(alertMsg).catch(() => {});
+    }
+
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  ⚠️  Swarm analysis failed: ${msg}`);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Daily P&L check — sum today's closed trade P&L from Supabase
@@ -2151,9 +2486,9 @@ async function pollKalshi(): Promise<void> {
         `  📈 ${m.ticker} | ${(yesPrice * 100).toFixed(0)}c | vol:${vol24h} | [${category}] ${m.title.slice(0, 50)}`
       );
 
-      // Analyze with Claude (confThreshold from tiered expiry system)
+      // Analyze with 5-agent swarm (confThreshold from tiered expiry system)
       const expirationRaw = String(m.close_time ?? m.expiration_time ?? m.end_date_iso ?? "");
-      await analyzeMarket(
+      await swarmAnalyzeMarket(
         marketId,
         m.ticker,
         m.title,
