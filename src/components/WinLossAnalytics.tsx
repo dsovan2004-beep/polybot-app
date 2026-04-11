@@ -142,7 +142,15 @@ export default function WinLossAnalytics() {
   const fetchData = useCallback(async () => {
     try {
       const res = await fetch("/api/win-loss");
-      const json = await res.json();
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+      const text = await res.text();
+      if (!text || text.trim().length === 0) {
+        throw new Error("Empty response");
+      }
+      const json = JSON.parse(text);
       if (!json.ok) throw new Error(json.error ?? "Failed");
       setData(json.data);
       setError(null);

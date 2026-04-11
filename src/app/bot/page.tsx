@@ -70,11 +70,28 @@ interface WhaleRow {
 // Fetchers
 // ---------------------------------------------------------------------------
 
+// Safe JSON parser — handles empty bodies, HTML errors, non-200 responses
+async function safeJson(res: Response): Promise<Record<string, unknown>> {
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+  const text = await res.text();
+  if (!text || text.trim().length === 0) {
+    throw new Error("Empty response body");
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`Invalid JSON: ${text.slice(0, 100)}`);
+  }
+}
+
 async function fetchMarkets(): Promise<MarketsApiData> {
   const res = await fetch("/api/markets");
-  const json = await res.json();
-  if (!json.ok) throw new Error(json.error ?? "Failed to load markets");
-  return json.data;
+  const json = await safeJson(res);
+  if (!json.ok) throw new Error(String(json.error ?? "Failed to load markets"));
+  return json.data as unknown as MarketsApiData;
 }
 
 async function fetchSwarmSignal(market: MarketRow): Promise<SignalRow | null> {
@@ -95,9 +112,9 @@ async function fetchSwarmSignal(market: MarketRow): Promise<SignalRow | null> {
         },
       }),
     });
-    const json = await res.json();
+    const json = await safeJson(res);
     if (!json.ok) return null;
-    return json.data as SignalRow;
+    return json.data as unknown as SignalRow;
   } catch {
     return null;
   }
@@ -105,9 +122,9 @@ async function fetchSwarmSignal(market: MarketRow): Promise<SignalRow | null> {
 
 async function fetchBtc5Min(): Promise<Btc5MinData> {
   const res = await fetch("/api/btc5min");
-  const json = await res.json();
-  if (!json.ok) throw new Error(json.error ?? "Failed to load");
-  return json.data;
+  const json = await safeJson(res);
+  if (!json.ok) throw new Error(String(json.error ?? "Failed to load"));
+  return json.data as unknown as Btc5MinData;
 }
 
 interface KalshiPositionRow {
@@ -134,9 +151,9 @@ interface BalanceData {
 
 async function fetchBalance(): Promise<BalanceData> {
   const res = await fetch("/api/balance");
-  const json = await res.json();
-  if (!json.ok) throw new Error(json.error ?? "Failed to load balance");
-  return json.data;
+  const json = await safeJson(res);
+  if (!json.ok) throw new Error(String(json.error ?? "Failed to load balance"));
+  return json.data as unknown as BalanceData;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,9 +182,9 @@ interface PositionsApiData {
 
 async function fetchPositions(): Promise<PositionsApiData> {
   const res = await fetch("/api/positions");
-  const json = await res.json();
-  if (!json.ok) throw new Error(json.error ?? "Failed to load positions");
-  return json.data;
+  const json = await safeJson(res);
+  if (!json.ok) throw new Error(String(json.error ?? "Failed to load positions"));
+  return json.data as unknown as PositionsApiData;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,16 +227,16 @@ interface WinLossData {
 
 async function fetchStats(): Promise<StatsApiData> {
   const res = await fetch("/api/stats");
-  const json = await res.json();
-  if (!json.ok) throw new Error(json.error ?? "Failed to load stats");
-  return json.data;
+  const json = await safeJson(res);
+  if (!json.ok) throw new Error(String(json.error ?? "Failed to load stats"));
+  return json.data as unknown as StatsApiData;
 }
 
 async function fetchWinLoss(): Promise<WinLossData> {
   const res = await fetch("/api/win-loss");
-  const json = await res.json();
-  if (!json.ok) throw new Error(json.error ?? "Failed to load win-loss");
-  return json.data;
+  const json = await safeJson(res);
+  if (!json.ok) throw new Error(String(json.error ?? "Failed to load win-loss"));
+  return json.data as unknown as WinLossData;
 }
 
 async function executeTrade(
@@ -232,9 +249,9 @@ async function executeTrade(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ signal, marketTicker, paperTrade }),
   });
-  const json = await res.json();
-  if (!json.ok) throw new Error(json.error ?? "Trade failed");
-  return json.data;
+  const json = await safeJson(res);
+  if (!json.ok) throw new Error(String(json.error ?? "Trade failed"));
+  return json.data as { orderId: string; size: number; paperTrade: boolean };
 }
 
 // ---------------------------------------------------------------------------
@@ -840,9 +857,8 @@ export default function BotDashboard() {
   // Check kill switch status
   const checkKillSwitch = useCallback(async () => {
     try {
-      const res = await fetch("/api/killswitch");
-      const json = await res.json();
-      if (json.ok) setKillSwitchActive(json.data.active);
+      const json = await safeJson(await fetch("/api/killswitch"));
+      if (json.ok) setKillSwitchActive((json.data as { active: boolean }).active);
     } catch {
       // Silent fail
     }
@@ -852,8 +868,7 @@ export default function BotDashboard() {
   const activateKillSwitch = useCallback(async () => {
     setShowKillConfirm(false);
     try {
-      const res = await fetch("/api/killswitch", { method: "POST" });
-      const json = await res.json();
+      const json = await safeJson(await fetch("/api/killswitch", { method: "POST" }));
       if (json.ok) setKillSwitchActive(true);
     } catch (err) {
       alert("Failed to activate kill switch: " + (err instanceof Error ? err.message : "Unknown error"));
