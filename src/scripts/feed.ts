@@ -2107,14 +2107,19 @@ async function fetchLiveCryptoPrices(): Promise<CryptoPrices | null> {
 // ---------------------------------------------------------------------------
 const fadeCooldowns = new Map<string, number>(); // coin-level fade cooldown: 'BTC_15M_FADE' → expiry timestamp
 const FADE_COOLDOWN_MS = 60 * 60 * 1000; // 60-minute cooldown after a fade-extreme trade
+const swarmCooldowns = new Map<string, number>(); // per-ticker swarm cooldown → expiry timestamp
+const SWARM_COOLDOWN_MS = 5 * 60 * 1000; // 5-minute cooldown between swarm calls per ticker
 
 async function pollKalshi(): Promise<void> {
   analyzedMarkets.clear(); // Reset per poll — allow re-evaluation as conditions change
 
-  // Purge expired fade cooldowns (prevents unbounded memory growth over days of runtime)
+  // Purge expired cooldowns (prevents unbounded memory growth over days of runtime)
   const now = Date.now();
   for (const [key, expiry] of fadeCooldowns) {
     if (now >= expiry) fadeCooldowns.delete(key);
+  }
+  for (const [key, expiry] of swarmCooldowns) {
+    if (now >= expiry) swarmCooldowns.delete(key);
   }
 
   totalPolled++;
@@ -2522,6 +2527,21 @@ async function pollKalshi(): Promise<void> {
       console.log(
         `  📈 ${m.ticker} | ${(yesPrice * 100).toFixed(0)}c | vol:${vol24h} | [${category}] ${m.title.slice(0, 50)}`
       );
+
+      // Fix 1: Skip swarm on weekly/multi-day markets — only run on same-day (daysLeft=0)
+      if (daysLeft > 0) {
+        console.log(`  ⏩ SKIP swarm: weekly market (${daysLeft} days left) ${m.ticker}`);
+        continue;
+      }
+
+      // Fix 2: Per-ticker swarm cooldown — max 1 swarm call per 5 min per market
+      const swarmCooldownExpiry = swarmCooldowns.get(m.ticker) ?? 0;
+      if (Date.now() < swarmCooldownExpiry) {
+        const minsLeft = Math.round((swarmCooldownExpiry - Date.now()) / 1000 / 60);
+        console.log(`  ⏩ SKIP swarm: cooldown active (${minsLeft}m remaining) ${m.ticker}`);
+        continue;
+      }
+      swarmCooldowns.set(m.ticker, Date.now() + SWARM_COOLDOWN_MS);
 
       // Re-fetch live crypto prices before each analysis (H1 fix: prices can move during loop)
       const freshPrices = await fetchLiveCryptoPrices();
